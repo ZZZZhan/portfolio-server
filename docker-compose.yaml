@@ -1,0 +1,17 @@
+version: '3.8'
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    container_name: nest_postgres
+    restart: always
+    environment:
+      POSTGRES_USER: nest_user
+      POSTGRES_PASSWORD: nest_password
+      POSTGRES_DB: nest_db
+    ports:
+      - '5432:5432'
+    volumes:
+      # 格式为 [宿主机路径]:[容器内路径]
+      # 冒号左边改为你想要的本地路径，右边的 /var/lib/postgresql/data 绝对不能改！
+      - ./postgres_data:/var/lib/postgresql/data
