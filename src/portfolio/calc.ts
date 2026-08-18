@@ -19,9 +19,9 @@ export interface HoldingResult {
   marketValue: number; // 市值
   realizedPnl: number; // 已实现盈亏
   unrealizedPnl: number; // 浮动盈亏（未实现）
-  currentRatio: number; // 当前占比（小数，如 0.25 = 25%）
+  currentRatio: number; // 当前配比 = 市值 / 目标总投入金额（相对 targetTotalAmount，非总市值占比）
   targetRatio: number; // 目标占比（小数，如 0.3 = 30%）
-  deviation: number; // 偏离 = currentRatio - targetRatio
+  deviation: number; // 偏离 = currentRatio - targetRatio（< 0 低配/未买够，> 0 超配）
 }
 
 export interface SnapshotResult {
@@ -98,9 +98,12 @@ export function computeSnapshot(input: CreateSnapshotInput): SnapshotResult {
   // 2. 组合总市值（各持仓市值之和）
   const totalMarketValue = holdingResults.reduce((s, h) => s + h.marketValue, 0);
 
-  // 3. 用总市值回填每个持仓的占比和偏离
+  // 3. 当前配比 = 持仓市值 / 目标总投入金额（targetTotalAmount），偏离 = currentRatio − targetRatio
+  //    口径：相对「目标总额」而非「当前总市值」——建仓未完成时能正确反映「低配/未买够」，
+  //    建仓完成后（市值≈目标总额）与按总市值占比的结果趋同。
+  const targetTotal = input.targetTotalAmount;
   for (const h of holdingResults) {
-    h.currentRatio = totalMarketValue > 0 ? h.marketValue / totalMarketValue : 0;
+    h.currentRatio = targetTotal > 0 ? h.marketValue / targetTotal : 0;
     h.deviation = h.currentRatio - h.targetRatio;
   }
 
