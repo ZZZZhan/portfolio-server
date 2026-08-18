@@ -42,6 +42,7 @@ interface EastMoneySuggestItem {
   Name: string; // 沪深300ETF华泰柏瑞
   Classify: string; // Fund / AStock / OTCFUND ...
   SecurityTypeName: string; // 基金 / 沪A
+  MktNum: string; // 市场代码：1=沪、0=深、其他（如 150）=场外基金
 }
 
 interface EastMoneySuggestResponse {
@@ -69,8 +70,7 @@ export class AssetSearchService {
   // 东方财富搜索 API token 是公开的固定值，非鉴权凭证
   private static readonly SEARCH_URL =
     'https://searchapi.eastmoney.com/api/suggest/get';
-  private static readonly SEARCH_TOKEN =
-    'D43BF722C8E33BDC906FB84D85D3D226';
+  private static readonly SEARCH_TOKEN = 'D43BF722C8E33BDC906FB84D85D3D226';
 
   constructor(@Optional() @Inject(HTTP_FETCHER) fetcher?: HttpFetcher) {
     this.fetcher = fetcher ?? defaultFetcher;
@@ -97,7 +97,9 @@ export class AssetSearchService {
   }
 
   /** 调用东方财富搜索接口并解析 JSON */
-  private async fetchSuggestions(keyword: string): Promise<EastMoneySuggestItem[]> {
+  private async fetchSuggestions(
+    keyword: string,
+  ): Promise<EastMoneySuggestItem[]> {
     const url =
       `${AssetSearchService.SEARCH_URL}` +
       `?input=${encodeURIComponent(keyword)}` +
@@ -112,7 +114,6 @@ export class AssetSearchService {
     } catch {
       throw new Error(`东方财富搜索响应不是合法 JSON`);
     }
-
     return parsed.QuotationCodeTable?.Data ?? [];
   }
 
@@ -136,29 +137,30 @@ export class AssetSearchService {
       exchange = Exchange.OTC; // 场外基金走净值接口（of 前缀）
     } else if (classify === 'Fund' || classify === 'ETF') {
       assetType = AssetType.ETF;
-      exchange = exchangeByCode(code); // 场内基金按代码前缀分沪/深
+      exchange = this.exchangeByMktNum(item.MktNum); // 场内基金按市场代码分沪/深
     } else if (
       classify === 'AStock' ||
       classify === 'BStock' ||
       classify === 'HStock'
     ) {
       assetType = AssetType.STOCK;
-      exchange = exchangeByCode(code);
+      exchange = this.exchangeByMktNum(item.MktNum);
     } else {
-      // 不支持的品种（债券、指数、期货等）不返回，避免污染选标的结果
+      // 不支持的品种（债券、指数、期权等）不返回，避免污染选标的结果
       return null;
     }
 
     return { symbol: code, name, assetType, exchange };
   }
-}
 
-/**
- * 按证券代码前缀推导交易所（沪/深），用于拼新浪行情前缀（sh / sz）。
- * - 5/6/9 开头 → SH（沪市：5xxxxx ETF、6xxxxx 股票、9xxxxx B股等）
- * - 0/1/3 开头 → SZ（深市：0xxxxx 股票、1xxxxx ETF、3xxxxx 创业板）
- * 与该归一逻辑也用于历史回填（见 migration 20260818123448）。
- */
-function exchangeByCode(code: string): Exchange {
-  return /^[569]/.test(code) ? Exchange.SH : Exchange.SZ;
+  /**
+   * 东方财富 MktNum → 交易所枚举。
+   * 1=沪市（SH），0=深市（SZ），其余（如 150 场外基金）归 OTC。
+   * 比按代码前缀推导更准（直接用源返回的市场标识）。
+   */
+  private exchangeByMktNum(mktNum: string | undefined): Exchange {
+    if (mktNum === '1') return Exchange.SH;
+    if (mktNum === '0') return Exchange.SZ;
+    return Exchange.OTC;
+  }
 }
