@@ -8,6 +8,17 @@ import {
   TradeInput,
 } from './calc';
 
+/**
+ * calculateAndSave 返回值：在纯计算结果上追加行情日期元信息。
+ * marketDate = 本次取到的行情日期（YYYY-MM-DD）。
+ * 为 null 表示行情源一项都没返回（全部走兜底价），今天无真实收盘行情，
+ * 调用方（cron）据此决定是否落当日快照。
+ */
+export type SnapshotWithDate = SnapshotResult & {
+  marketDate: string | null; // 取自行情源的最新日期
+  written: boolean; // 本次是否真的落库（onlyIfMarketToday 时非当日收盘则不写）
+};
+
 @Injectable()
 export class SnapshotService {
   constructor(
@@ -19,21 +30,23 @@ export class SnapshotService {
   async calculateAndSave(
     portfolioId: number,
     date = new Date(),
-  ): Promise<SnapshotResult> {
+    options: { onlyIfMarketToday?: boolean } = {},
+  ): Promise<SnapshotWithDate> {
+    const onlyIfMarketToday = options.onlyIfMarketToday ?? false;
     // 1. 查组合（含 targetTotalAmount）
     const portfolio = await this.prisma.portfolio.findUnique({
       where: { id: portfolioId },
     });
     if (!portfolio) throw new Error(`组合不存在: ${portfolioId}`);
 
-    // 2. 查该组合所有持仓，含标的 + 交易（约定按 tradedAt 升序）
+    // 2. 查该组合的所有持仓，含标的 + 交易（约定按 tradedAt 升序）
     const holdings = await this.prisma.holding.findMany({
       where: { portfolioId },
       include: { asset: true, trades: { orderBy: { tradedAt: 'asc' } } },
     });
 
-    // 3. 批量取价（行情源），组装 symbol → price 映射
-    const prices = await this.fetchPrices(holdings);
+    // 3. 批量取价（行情源）+ 本次行情日期
+    const { prices, marketDate } = await this.fetchPrices(holdings);
 
     // 4. 组装 computeSnapshot 输入
     const input = {
@@ -71,25 +84,46 @@ export class SnapshotService {
       todayProfitRate = todayProfit / Number(yesterday.totalMarketValue);
     }
 
-    // 7. 写入 DailySnapshot（同组合 + 指定日期 upsert）
-    await this.saveSnapshot(portfolioId, date, result, todayProfit, todayProfitRate);
+    // 7. 若 onlyIfMarketToday 且行情日期非 request date（非交易日/节假日/源未收盘），
+    //    则不落当日快照（避免周末/假期写一条相同值的占位行，干扰“最近交易日”判断）
+    const today = this.asDateOnly(date);
+    const todayStr = [
+      today.getFullYear(),
+      String(today.getMonth() + 1).padStart(2, '0'),
+      String(today.getDate()).padStart(2, '0'),
+    ].join('-');
+    const written =
+      !onlyIfMarketToday || (marketDate !== null && marketDate >= todayStr);
 
-    return result;
+    if (written) {
+      await this.saveSnapshot(
+        portfolioId,
+        date,
+        result,
+        todayProfit,
+        todayProfitRate,
+      );
+    }
+
+    return { ...result, marketDate, written };
   }
 
   /**
-   * 批量取价并构造成 { symbol: price }。
+   * 批量取价并构造成 { symbol: price }，同时返回本次行情日期。
    * 源返回不了的标的走降级兜底：
    *   1. 该标的最近一次 COMPLETED 成交价/净值（trade.price）
    *   2. 仍无 → 0（市值视为 0）
    * 对齐 SPEC 第 12 条：行情源不可用时服务仍可用，不抛错。
+   *
+   * marketDate：取自行情源返回的最新日期。若行情源一项都没返回
+   * （全部兜底），为 null —— 表示今天无真实收盘行情，cron 据此决定是否落当日快照。
    */
   private async fetchPrices(
     holdings: {
       asset: { symbol: string; exchange: Exchange };
       trades: { price: Prisma.Decimal | null; status: string }[];
     }[],
-  ): Promise<Record<string, number>> {
+  ): Promise<{ prices: Record<string, number>; marketDate: string | null }> {
     const prices: Record<string, number> = {};
 
     // 行情源取价
@@ -100,6 +134,12 @@ export class SnapshotService {
       })),
     );
     for (const r of fetched) prices[r.symbol] = r.price;
+
+    // 本次行情日期：取行情源返回的最新日期（场外净值可能晚出，不影响判断今日）
+    let marketDate: string | null = null;
+    for (const r of fetched) {
+      if (r.date && (!marketDate || r.date > marketDate)) marketDate = r.date;
+    }
 
     // 行情缺失的标的，用最近一次 COMPLETED 成交价兜底
     for (const h of holdings) {
@@ -112,14 +152,16 @@ export class SnapshotService {
       }
     }
 
-    return prices;
+    return { prices, marketDate };
   }
 
-  /** 只取日期部分（当天凌晨），用于快照键与昨日查询 */
+  /** 只取日期部分（当天凌晨），用于快照键与昨日查询。
+   *  用本地年月日构造 UTC 0 点，避免 setHours(0,0,0,0) 在非 UTC 时区下
+   *  转 UTC 后日期前移一天（Postgres @db.Date 截取 UTC 日期会错位）。 */
   private asDateOnly(d: Date): Date {
-    const dateOnly = new Date(d);
-    dateOnly.setHours(0, 0, 0, 0);
-    return dateOnly;
+    return new Date(
+      Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()),
+    );
   }
 
   /** 写快照行（含组合配比序列化的 holdings Json） */
