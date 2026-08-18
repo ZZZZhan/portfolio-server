@@ -16,17 +16,30 @@ export class PortfolioService {
         `持仓目标配比之和必须为 100，当前为 ${sum}`,
       );
     }
+
+    // 按 symbol upsert Asset：前端搜索到的标的可能尚未落库，自动建表
+    const holdings = await Promise.all(
+      createPortfolioDto.holdings.map(async (h) => {
+        const asset = await this.prisma.asset.upsert({
+          where: { symbol: h.symbol },
+          create: { symbol: h.symbol, name: h.name, type: h.assetType },
+          update: { name: h.name, type: h.assetType }, // 名称/类型以后端最新搜索结果为准
+        });
+        return {
+          assetId: asset.id,
+          targetRatio: h.targetRatio,
+          rebalanceThreshold: h.rebalanceThreshold ?? 5,
+        };
+      }),
+    );
+
     await this.prisma.portfolio.create({
       data: {
         userId,
         name: createPortfolioDto.name,
         targetTotalAmount: createPortfolioDto.targetTotalAmount,
         holdings: {
-          create: createPortfolioDto.holdings.map((h) => ({
-            assetId: h.assetId,
-            targetRatio: h.targetRatio,
-            rebalanceThreshold: h.rebalanceThreshold ?? 5,
-          })),
+          create: holdings,
         },
       },
       include: {
@@ -46,7 +59,15 @@ export class PortfolioService {
   }
 
   findOne(id: number) {
-    return `This action returns a #${id} portfolio`;
+    return this.prisma.portfolio.findUnique({
+      where: { id },
+      include: {
+        holdings: {
+          include: { asset: true },
+          orderBy: { id: 'asc' },
+        },
+      },
+    });
   }
 
   update(id: number, updatePortfolioDto: UpdatePortfolioDto) {

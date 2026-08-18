@@ -12,9 +12,11 @@ import {
 import { PortfolioService } from './portfolio.service';
 import { TradeService } from './trade.service';
 import { SnapshotService } from './snapshot.service';
+import { AssetSearchService } from './asset-search.service';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { RecordTradeDto } from './dto/create-trade.dto';
+import { SearchAssetDto } from './dto/search-asset.dto';
 
 @Controller('portfolio')
 export class PortfolioController {
@@ -22,6 +24,7 @@ export class PortfolioController {
     private readonly portfolioService: PortfolioService,
     private readonly tradeService: TradeService,
     private readonly snapshotService: SnapshotService,
+    private readonly assetSearchService: AssetSearchService,
   ) {}
 
   @Post()
@@ -39,20 +42,24 @@ export class PortfolioController {
     return this.portfolioService.findAll(userId);
   }
 
-  @Get('trades')
-  findTrades(@Query('userId', ParseIntPipe) userId: number) {
-    return this.tradeService.findByUser(userId);
+  @Get(':id/trades')
+  findPortfolioTrades(
+    @Param('id', ParseIntPipe) portfolioId: number,
+    @Query('userId', ParseIntPipe) userId: number,
+  ) {
+    return this.tradeService.findByPortfolio(portfolioId, userId);
   }
 
-  @Post(':id/trades')
+  @Post(':id/holdings/:holdingId/trades')
   recordTrade(
     @Param('id', ParseIntPipe) portfolioId: number,
+    @Param('holdingId', ParseIntPipe) holdingId: number,
     @Body() recordTradeDto: RecordTradeDto,
     // @TODO(M3): userId 改为从 @Req() req.session 取当前登录用户，去掉 query 传参
     // 目前未接 better-auth，暂用 ?userId= 传参
     @Query('userId', ParseIntPipe) userId: number,
   ) {
-    return this.tradeService.create(recordTradeDto, portfolioId, userId);
+    return this.tradeService.create(recordTradeDto, holdingId, portfolioId, userId);
   }
 
   // 调试端点：手动触发快照计算 + 返回（M4 换成 cron 定时）
@@ -65,6 +72,11 @@ export class PortfolioController {
   @Get(':id/snapshot')
   getLatestSnapshot(@Param('id', ParseIntPipe) id: number) {
     return this.snapshotService.getLatest(id);
+  }
+
+  @Get('assets/search')
+  searchAssets(@Query() query: SearchAssetDto) {
+    return this.assetSearchService.search(query);
   }
 
   @Get(':id')
