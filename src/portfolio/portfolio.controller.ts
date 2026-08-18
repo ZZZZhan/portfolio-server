@@ -11,6 +11,7 @@ import {
 } from '@nestjs/common';
 import { PortfolioService } from './portfolio.service';
 import { TradeService } from './trade.service';
+import { SnapshotService } from './snapshot.service';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { RecordTradeDto } from './dto/create-trade.dto';
@@ -20,6 +21,7 @@ export class PortfolioController {
   constructor(
     private readonly portfolioService: PortfolioService,
     private readonly tradeService: TradeService,
+    private readonly snapshotService: SnapshotService,
   ) {}
 
   @Post()
@@ -51,6 +53,12 @@ export class PortfolioController {
     @Query('userId', ParseIntPipe) userId: number,
   ) {
     return this.tradeService.create(recordTradeDto, portfolioId, userId);
+  }
+
+  // 调试端点：手动触发快照计算 + 返回（M4 换成 cron 定时）
+  @Post(':id/snapshot')
+  runSnapshot(@Param('id', ParseIntPipe) id: number) {
+    return this.snapshotService.calculateAndSave(id);
   }
 
   @Get(':id')
