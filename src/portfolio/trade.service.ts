@@ -8,9 +8,17 @@ export class TradeService {
 
   // TODO: 待完善 —— 场内：amount = shares × price；场外：amount = dto.amount
   // 交易方向 direction 影响份额/成本的加减
-  async create(recordTradeDto: RecordTradeDto, portfolioId: number, userId: number) {
+  async create(
+    recordTradeDto: RecordTradeDto,
+    portfolioId: number,
+    userId: number,
+  ) {
     // 校验：跨用户隔离 —— 这个 holding 必须属于 portfolioId，且 portfolio 属于 userId
-    await this.ensureHoldingBelongsToPortfolio(recordTradeDto.holdingId, portfolioId, userId);
+    await this.ensureHoldingBelongsToPortfolio(
+      recordTradeDto.holdingId,
+      portfolioId,
+      userId,
+    );
 
     // 场内交易：后端根据份额×单价算金额；场外：用用户填的 amount
     const amount =
@@ -26,8 +34,10 @@ export class TradeService {
         holdingId: recordTradeDto.holdingId,
         type: recordTradeDto.type,
         direction: recordTradeDto.direction,
-        amount: String(amount),          // Decimal 转字符串
-        shares: recordTradeDto.shares ? String(recordTradeDto.shares) : undefined,
+        amount: String(amount), // Decimal 转字符串
+        shares: recordTradeDto.shares
+          ? String(recordTradeDto.shares)
+          : undefined,
         price: recordTradeDto.price ? String(recordTradeDto.price) : undefined,
         status: status as any,
       },

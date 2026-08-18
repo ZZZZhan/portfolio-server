@@ -7,6 +7,7 @@ import {
   Param,
   Delete,
   Query,
+  ParseIntPipe,
 } from '@nestjs/common';
 import { PortfolioService } from './portfolio.service';
 import { TradeService } from './trade.service';
@@ -24,45 +25,49 @@ export class PortfolioController {
   @Post()
   create(
     @Body() createPortfolioDto: CreatePortfolioDto,
-    @Query('userId') userId: string,
+    // @TODO(M3): userId 改为从 @Req() req.session 取当前登录用户
+    // 目前未接 better-auth，暂用 ?userId= 传参
+    @Query('userId', ParseIntPipe) userId: number,
   ) {
-    return this.portfolioService.create(createPortfolioDto, +userId);
+    return this.portfolioService.create(createPortfolioDto, userId);
   }
 
   @Get()
-  findAll(@Query('userId') userId: string) {
-    return this.portfolioService.findAll(+userId);
+  findAll(@Query('userId', ParseIntPipe) userId: number) {
+    return this.portfolioService.findAll(userId);
   }
 
   @Get('trades')
-  findTrades(@Query('userId') userId: string) {
-    return this.tradeService.findByUser(+userId);
+  findTrades(@Query('userId', ParseIntPipe) userId: number) {
+    return this.tradeService.findByUser(userId);
   }
 
   @Post(':id/trades')
   recordTrade(
-    @Param('id') portfolioId: string,
+    @Param('id', ParseIntPipe) portfolioId: number,
     @Body() recordTradeDto: RecordTradeDto,
-    @Query('userId') userId: string,
+    // @TODO(M3): userId 改为从 @Req() req.session 取当前登录用户，去掉 query 传参
+    // 目前未接 better-auth，暂用 ?userId= 传参
+    @Query('userId', ParseIntPipe) userId: number,
   ) {
-    return this.tradeService.create(recordTradeDto, +portfolioId, +userId);
+    return this.tradeService.create(recordTradeDto, portfolioId, userId);
   }
 
   @Get(':id')
-  findOne(@Param('id') id: string) {
-    return this.portfolioService.findOne(+id);
+  findOne(@Param('id', ParseIntPipe) id: number) {
+    return this.portfolioService.findOne(id);
   }
 
   @Patch(':id')
   update(
-    @Param('id') id: string,
+    @Param('id', ParseIntPipe) id: number,
     @Body() updatePortfolioDto: UpdatePortfolioDto,
   ) {
-    return this.portfolioService.update(+id, updatePortfolioDto);
+    return this.portfolioService.update(id, updatePortfolioDto);
   }
 
   @Delete(':id')
-  remove(@Param('id') id: string) {
-    return this.portfolioService.remove(+id);
+  remove(@Param('id', ParseIntPipe) id: number) {
+    return this.portfolioService.remove(id);
   }
 }
