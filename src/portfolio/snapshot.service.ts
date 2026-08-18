@@ -97,4 +97,27 @@ export class SnapshotService {
       },
     });
   }
+
+  /** 读取某组合最新快照（不触发计算） */
+  async getLatest(portfolioId: number) {
+    const snap = await this.prisma.dailySnapshot.findFirst({
+      where: { portfolioId },
+      orderBy: { date: 'desc' },
+    });
+    if (!snap) return null;
+    // Decimal → number，holdings Json → 结构化
+    const holdings = (snap.holdings as any)?.holdings ?? snap.holdings ?? [];
+    return {
+      portfolioId: snap.portfolioId,
+      date: snap.date,
+      totalMarketValue: Number(snap.totalMarketValue),
+      totalCost: Number(snap.totalCost),
+      totalPnl: Number(snap.totalProfit),
+      profitRate: Number(snap.profitRate),
+      todayProfit: Number(snap.todayProfit),
+      todayProfitRate: Number(snap.todayProfitRate),
+      completion: Number(snap.completion),
+      holdings,
+    };
+  }
 }

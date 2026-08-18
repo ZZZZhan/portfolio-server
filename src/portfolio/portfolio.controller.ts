@@ -61,6 +61,12 @@ export class PortfolioController {
     return this.snapshotService.calculateAndSave(id);
   }
 
+  // 读取某组合最新快照（不触发计算）
+  @Get(':id/snapshot')
+  getLatestSnapshot(@Param('id', ParseIntPipe) id: number) {
+    return this.snapshotService.getLatest(id);
+  }
+
   @Get(':id')
   findOne(@Param('id', ParseIntPipe) id: number) {
     return this.portfolioService.findOne(id);
