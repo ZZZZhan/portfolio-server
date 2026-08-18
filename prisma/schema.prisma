@@ -12,18 +12,25 @@ datasource db {
 
 // ========== 标的（证券） ==========
 model Asset {
-  id     Int    @id @default(autoincrement())
-  symbol String @unique // 如 510300 / 513100 / 159915
-  name   String // 如 沪深300ETF
-  type   AssetType
+  id        Int      @id @default(autoincrement())
+  symbol    String   @unique // 如 510300 / 513100 / 159915
+  name      String // 如 滇深300ETF
+  type      AssetType
+  exchange Exchange // 交易所：沪/深/场外，用于拼行情源前缀（sh/sz/of）
   createdAt DateTime @default(now())
-  holdings Holding[]
+  holdings  Holding[]
 }
 
 enum AssetType {
   ETF
   STOCK
   FUND // 场外基金
+}
+
+enum Exchange {
+  SH // 沪市
+  SZ // 深市
+  OTC // 场外（基金净值）
 }
 
 // ========== 投资组合 ==========

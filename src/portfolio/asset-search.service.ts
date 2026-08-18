@@ -1,6 +1,6 @@
 import { Injectable, Optional, Inject, Logger } from '@nestjs/common';
 import { SearchAssetDto } from './dto/search-asset.dto';
-import { AssetType } from '../generated/prisma/client';
+import { AssetType, Exchange } from '../generated/prisma/client';
 
 /**
  * 搜索结果项 —— 对齐前端「新建组合时选标的」所需的最小信息集。
@@ -10,6 +10,7 @@ export interface AssetSearchResult {
   symbol: string; // 标的代码，如 510300 / 110022 / 600519
   name: string; // 标的名称，如 沪深300ETF华泰柏瑞
   assetType: AssetType; // 归一到 Prisma schema 的 AssetType 枚举（ETF / STOCK / FUND）
+  exchange: Exchange; // 交易所：SH / SZ / OTC，用于拼行情源前缀（sh / sz / of）
 }
 
 /**
@@ -116,10 +117,10 @@ export class AssetSearchService {
   }
 
   /**
-   * 把东方财富的 Classify 归一到我们的 AssetType 枚举。
-   * - AStock / BStock / Index 等 → STOCK
-   * - OTCFUND（场外基金）→ FUND
-   * - Fund（含 ETF，场内基金）→ ETF
+   * 把东方财富的 Classify 归一到我们的 AssetType / Exchange 枚举。
+   * - OTCFUND（场外基金）→ FUND / OTC
+   * - Fund（含 ETF，场内基金）→ ETF / SH|SZ（按代码前缀）
+   * - AStock / BStock / HStock → STOCK / SH|SZ（按代码前缀）
    * - 其他不认识的丢弃（返回 null）
    */
   private normalize(item: EastMoneySuggestItem): AssetSearchResult | null {
@@ -129,21 +130,35 @@ export class AssetSearchService {
 
     const classify = item.Classify ?? '';
     let assetType: AssetType;
+    let exchange: Exchange;
     if (classify === 'OTCFUND') {
       assetType = AssetType.FUND;
+      exchange = Exchange.OTC; // 场外基金走净值接口（of 前缀）
     } else if (classify === 'Fund' || classify === 'ETF') {
       assetType = AssetType.ETF;
+      exchange = exchangeByCode(code); // 场内基金按代码前缀分沪/深
     } else if (
       classify === 'AStock' ||
       classify === 'BStock' ||
       classify === 'HStock'
     ) {
       assetType = AssetType.STOCK;
+      exchange = exchangeByCode(code);
     } else {
       // 不支持的品种（债券、指数、期货等）不返回，避免污染选标的结果
       return null;
     }
 
-    return { symbol: code, name, assetType };
+    return { symbol: code, name, assetType, exchange };
   }
+}
+
+/**
+ * 按证券代码前缀推导交易所（沪/深），用于拼新浪行情前缀（sh / sz）。
+ * - 5/6/9 开头 → SH（沪市：5xxxxx ETF、6xxxxx 股票、9xxxxx B股等）
+ * - 0/1/3 开头 → SZ（深市：0xxxxx 股票、1xxxxx ETF、3xxxxx 创业板）
+ * 与该归一逻辑也用于历史回填（见 migration 20260818123448）。
+ */
+function exchangeByCode(code: string): Exchange {
+  return /^[569]/.test(code) ? Exchange.SH : Exchange.SZ;
 }

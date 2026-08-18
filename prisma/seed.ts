@@ -17,16 +17,16 @@ async function main() {
 
   // 标的（用户 mock 里的组合）
   const hs300 = await prisma.asset.create({
-    data: { symbol: '510300', name: '沪深300ETF', type: 'ETF' },
+    data: { symbol: '510300', name: '沪深300ETF', type: 'ETF', exchange: 'SH' },
   });
   const sp500 = await prisma.asset.create({
-    data: { symbol: '513100', name: '标普500ETF', type: 'ETF' },
+    data: { symbol: '513100', name: '标普500ETF', type: 'ETF', exchange: 'SH' },
   });
   const cyb = await prisma.asset.create({
-    data: { symbol: '159915', name: '创业板ETF', type: 'ETF' },
+    data: { symbol: '159915', name: '创业板ETF', type: 'ETF', exchange: 'SZ' },
   });
   const bond = await prisma.asset.create({
-    data: { symbol: '511260', name: '债券基金', type: 'FUND' },
+    data: { symbol: '511260', name: '债券基金', type: 'FUND', exchange: 'OTC' },
   });
 
   // 组合（目标金额 = 用户设定 80 万）

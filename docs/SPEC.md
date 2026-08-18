@@ -1,6 +1,6 @@
 # SPEC：投资组合管理后端（portfolio-server）
 
-> 状态：定稿（待实现）。本文档是实现的唯一依据，改动需经讨论。
+> 状态：定稿（实现中）。本文档是实现的唯一依据，改动需经讨论。
 > 前端：`portfolio-app`（Next.js 16，移动端风格，当前用 `src/lib/mockData.ts` 假数据，无 API 层）。
 
 ## Problem Statement
@@ -14,7 +14,7 @@
 一个 NestJS 后端（`portfolio-server`）：
 - **数据层**：Prisma + PostgreSQL（docker 已有），存用户（复用 better-auth 的 user）、组合、持仓、交易、每日快照。
 - **行情层**：新浪/腾讯免费行情接口，藏在 `PriceProvider` adapter 后；白天不实时拉取，**每交易日日终（18:00 快照 + 22:00 补场外份额）** 由内置 cron 拉全量行情，计算组合级/持仓级数据写入 `DailySnapshot`。
-- **API 层**：纯 BFF 聚合端点，每个前端页面一个端点，一次请求拿全该页数据，全部从快照读取。录入/建组合走聚合端点写库。
+- **API 层**：细粒度资源端点（RESTful），前端自行组合页面所需数据；快照计算在后端完成。录入/建组合走资源端点写库。
 - **认证**：better-auth 挂 NestJS，cookie session，复用其 user 表，业务表以 userId 关联。
 - 所有收益/偏离/完成度计算在后端完成，前端只展示。
 
@@ -78,14 +78,25 @@ DailySnapshot      id, portfolioId, date(每组合每日一行), 组合级: tota
 
 今日收益 = 今日快照市值 − 昨日快照市值；今日收益率 = 今日收益 / 昨日市值（需要前一日快照）
 
-### API 契约（BFF 聚合端点，全部读快照）
-- `GET /api/home` — 首页：总资产、今日收益/率、累计收益/率、组合列表（名称/今日涨跌/完成度/市值/风险标识）
-- `GET /api/portfolios/:id` — 详情：汇总 + 持仓明细 + 偏离告警条数
-- `GET /api/portfolios/:id/rebalance` — 再平衡：各持仓偏离度/状态/建议
-- `GET /api/portfolios/:id/adjust` — 调整：各持仓当前/目标/调整后建议配比
-- `POST /api/portfolios` — 新建组合（名称 + 目标配置）
-- `POST /api/portfolios/:id/trades` — 录入交易（场内：份额+单价；场外：金额）
-- better-auth 路由 `/api/auth/*`（register/login/session 等）
+### API 契约
+
+> **不采用 BFF 聚合端点。** 经讨论，后端只提供细粒度资源端点（标准的 RESTful），前端自行组合所需数据。
+> SPEC 原拟的 `GET /api/home`、`/api/portfolios/:id`、`/api/portfolios/:id/rebalance`、`/api/portfolios/:id/adjust` 等「一页一端点」聚合接口**不再实现**；前端从下方列出的细粒度端点自行取数拼装页面。
+
+**已实现 / 待实现端点：**
+- `GET /portfolio?userId=` — 某用户的组合列表（已实现）
+- `GET /portfolio/:id` — 组合详情（含持仓 + 标的）（已实现）
+- `POST /portfolio` — 新建组合（名称 + 目标配置，含持仓）（已实现）
+- `PATCH /portfolio/:id` — 更新组合（骨架，待实现）
+- `DELETE /portfolio/:id` — 删除组合（骨架，待实现）
+- `GET /portfolio/assets/search?keyword=` — 资产检索（东方财富）（已实现）
+- `GET /portfolio/:id/trades?userId=` — 某组合下的交易列表（已实现）
+- `POST /portfolio/:id/holdings/:holdingId/trades` — 录入交易（场内：份额+单价；场外：金额，份额日终补）（已实现）
+- `POST /portfolio/:id/snapshot` — 手动触发快照计算并写入（已实现，M4 换 cron）
+- `GET /portfolio/:id/snapshot` — 读某组合最近一次快照（已实现）
+- better-auth 路由 `/api/auth/*`（register/login/session 等）—— 待实现（M3）
+
+> 注意：当前路由无 `/api` 前缀，`main.ts` 未设 `setGlobalPrefix('api')`；接入 better-auth 前一并统一。
 
 ### Cron 任务（@nestjs/schedule）
 - 每交易日 18:00：拉全部持仓最新价 → 计算 → 写当日 DailySnapshot（若未写）
@@ -99,10 +110,12 @@ DailySnapshot      id, portfolioId, date(每组合每日一行), 组合级: tota
 
 - **好测试的定义**：只测外部行为（打 HTTP API），不测内部模块结构/实现细节。
 - **两个测试缝**：
-  1. **主缝：HTTP API e2e**（supertest 打 Nest BFF 端点，连真实 Postgres 测试库 + 注入 fake PriceProvider 返回固定价格）。覆盖完整链路：认证 → 建组合 → 录场内/场外交易 → 触发快照计算 → 读首页/详情/再平衡/调整。
+  1. **主缝：HTTP API e2e**（supertest 打 Nest 端点，连真实 Postgres 测试库 + 注入 fake PriceProvider 返回固定价格）。覆盖完整链路：认证 → 建组合 → 录场内/场外交易 → 触发快照计算 → 读组合详情/快照。
   2. **唯一内部缝：PriceProvider adapter 接口**（fake 注入，验证可替换性）。
 - 快照计算逻辑不做独立单测——通过 API e2e 全链路验证（刻意避免滋生内部缝）。
 - 先例：repo 现有 `app.e2e-spec.ts`（Nest 默认 smoke test）将扩展为 e2e 基底。
+
+> 注：原 SPEC 以「BFF 聚合端点」为 e2e 验收对象，现 BFF 端点已取消（见上节），e2e 转为验收细粒度资源端点。
 
 ## Out of Scope
 
@@ -113,3 +126,4 @@ DailySnapshot      id, portfolioId, date(每组合每日一行), 组合级: tota
 - 场外基金的 T+1 确认、赎回规则模拟（个人记账简化处理）
 - 前端 `portfolio-app` 的改造（接 API、rewrites 代理）——本期只做后端，前端接入作为下一张票
 - 行情历史曲线/API 之外的消费方
+- **BFF 聚合端点**（`/api/home`、`/api/portfolios/:id`、`/rebalance`、`/adjust` 等「一页一端点」）——后端只提供细粒度资源端点，前端自行组合，不再实现聚合层

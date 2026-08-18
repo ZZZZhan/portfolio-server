@@ -22,8 +22,8 @@ export class PortfolioService {
       createPortfolioDto.holdings.map(async (h) => {
         const asset = await this.prisma.asset.upsert({
           where: { symbol: h.symbol },
-          create: { symbol: h.symbol, name: h.name, type: h.assetType },
-          update: { name: h.name, type: h.assetType }, // 名称/类型以后端最新搜索结果为准
+          create: { symbol: h.symbol, name: h.name, type: h.assetType, exchange: h.exchange },
+          update: { name: h.name, type: h.assetType, exchange: h.exchange }, // 名称/类型/交易所以后端最新搜索结果为准
         });
         return {
           assetId: asset.id,

@@ -10,7 +10,7 @@ import {
   IsEnum,
 } from 'class-validator';
 import { Type } from 'class-transformer';
-import { AssetType } from '../../generated/prisma/client';
+import { AssetType, Exchange } from '../../generated/prisma/client';
 
 export class CreatePortfolioDto {
   @IsString()
@@ -45,6 +45,9 @@ export class HoldingInput {
 
   @IsEnum(AssetType, { message: '资产类型必须是 ETF / STOCK / FUND' })
   assetType!: AssetType;
+
+  @IsEnum(Exchange, { message: '交易所必须是 SH / SZ / OTC' })
+  exchange!: Exchange; // 行情源前缀依据，由资产搜索接口返回
 
   @IsNumber()
   @Min(0)
