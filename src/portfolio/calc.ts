@@ -19,9 +19,9 @@ export interface HoldingResult {
   marketValue: number; // 市值
   realizedPnl: number; // 已实现盈亏
   unrealizedPnl: number; // 浮动盈亏（未实现）
-  currentRatio: number; // 当前配比 = 市值 / 目标总投入金额（相对 targetTotalAmount，非总市值占比）
+  currentRatio: number; // 当前配比：建仓完成后 = 市值/总市值（再平衡口径）；未完成置 0（不提醒）
   targetRatio: number; // 目标占比（小数，如 0.3 = 30%）
-  deviation: number; // 偏离 = currentRatio - targetRatio（< 0 低配/未买够，> 0 超配）
+  deviation: number; // 偏离 = currentRatio - targetRatio；建仓未完成置 0（不提醒再平衡）
 }
 
 export interface SnapshotResult {
@@ -98,25 +98,33 @@ export function computeSnapshot(input: CreateSnapshotInput): SnapshotResult {
   // 2. 组合总市值（各持仓市值之和）
   const totalMarketValue = holdingResults.reduce((s, h) => s + h.marketValue, 0);
 
-  // 3. 当前配比 = 持仓市值 / 目标总投入金额（targetTotalAmount），偏离 = currentRatio − targetRatio
-  //    口径：相对「目标总额」而非「当前总市值」——建仓未完成时能正确反映「低配/未买够」，
-  //    建仓完成后（市值≈目标总额）与按总市值占比的结果趋同。
-  const targetTotal = input.targetTotalAmount;
+  // 3. 组合汇总（需先算 totalCost / completion，再决定 currentRatio 口径）
+  //    累计投入成本（已完成交易的买入总额）—— 用于 completion 和 profitRate
+  const totalCost = totalBuyAmountForAll(input.holdings);
+  const completion = input.targetTotalAmount > 0 ? totalCost / input.targetTotalAmount : 0;
+
+  // 4. 当前配比与偏离 —— 按建仓阶段切换口径：
+  //    - 建仓未完成（completion < 100%）：不提醒偏离，currentRatio/deviation 置 0
+  //      （此时若按市值占比会假性达标；按目标总额会全员低配——都无再平衡意义）
+  //    - 建仓完成（completion >= 100%）：用实际市值占比 marketValue/totalMarketValue
+  //      整体同比例涨跌时配比关系不变、偏离≈0，只有真正配比失衡才提醒再平衡
+  const isRebalancePhase = completion >= 1;
   for (const h of holdingResults) {
-    h.currentRatio = targetTotal > 0 ? h.marketValue / targetTotal : 0;
-    h.deviation = h.currentRatio - h.targetRatio;
+    if (isRebalancePhase) {
+      h.currentRatio = totalMarketValue > 0 ? h.marketValue / totalMarketValue : 0;
+      h.deviation = h.currentRatio - h.targetRatio;
+    } else {
+      h.currentRatio = 0;
+      h.deviation = 0;
+    }
   }
 
-  // 4. 组合汇总
-  // 累计投入成本（已完成交易的买入总额）—— 用于 completion 和 profitRate
-  const totalCost = totalBuyAmountForAll(input.holdings);
-  // 累计盈亏 = 所有持仓的（已实现 + 浮动）
+  // 5. 累计盈亏 = 所有持仓的（已实现 + 浮动）
   const totalPnl = holdingResults.reduce(
     (s, h) => s + h.realizedPnl + h.unrealizedPnl,
     0,
   );
   const profitRate = totalCost > 0 ? totalPnl / totalCost : 0;
-  const completion = input.targetTotalAmount > 0 ? totalCost / input.targetTotalAmount : 0;
 
   return {
     portfolioId: input.portfolioId,
