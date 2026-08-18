@@ -47,8 +47,8 @@
 better-auth 表：user / session / account / verification（复用，不新建 User）
 
 Asset              id, symbol(唯一, 如 510300), name(沪深300ETF), type(ETF/股票/基金)
-Portfolio          id, userId(→user), name, targetConfig Json(组合级目标配置, 如目标总投入/再平衡规则)
-Holding            id, portfolioId, assetId, targetRatio(目标配比 %)
+Portfolio          id, userId(→user), name, targetTotalAmount(目标总投入金额, 用户设定, Decimal)
+Holding            id, portfolioId, assetId, targetRatio(目标配比 %), rebalanceThreshold(偏离阈值 %, 如 5 = 偏离>5%提醒再平衡)
 Trade              id, holdingId, type(EXCHANGE 场内 / OTC 场外), amount(必填),
                    shares(场内必填; 场外=金额÷当日净值, 日终补全), price(场内成交价/场外净值), tradedAt, status(COMPLETED/PENDING 份额待定)
 DailySnapshot      id, portfolioId, date(每组合每日一行), 组合级: totalMarketValue, totalCost, totalProfit, profitRate, todayProfit, todayProfitRate, completion
@@ -60,7 +60,7 @@ DailySnapshot      id, portfolioId, date(每组合每日一行), 组合级: tota
 ### 收益口径
 - 今日收益 = 今日快照市值 − 昨日快照市值；今日收益率 = 今日收益 / 昨日市值
 - 累计收益 = 当前市值 − 累计投入成本；收益率 = 累计收益 / 累计投入成本（成本口径，不做 TWR）
-- 建仓完成度 = 已投入成本 / 目标投入成本（targetConfig 里的目标）；场外份额待定时不参与市值
+- 建仓完成度 = 已投入成本 / 目标总投入金额（targetTotalAmount，用户设定）；场外份额待定时不参与市值
 
 ### API 契约（BFF 聚合端点，全部读快照）
 - `GET /api/home` — 首页：总资产、今日收益/率、累计收益/率、组合列表（名称/今日涨跌/完成度/市值/风险标识）
