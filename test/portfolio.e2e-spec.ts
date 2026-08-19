@@ -3,22 +3,48 @@ import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
+import { SnapshotCronService } from './../src/portfolio/snapshot-cron.service';
+import { TransformInterceptor } from './../src/common/transform.interceptor';
+import { PrismaService } from './../src/prisma/prisma.service';
+
+interface PortfolioListResponse {
+  code: number;
+  data: Array<{
+    userId: number;
+    name: string;
+    targetTotalAmount: string;
+  }>;
+}
 
 describe('PortfolioController (e2e)', () => {
   let app: INestApplication<App>;
+  let prisma: PrismaService;
 
-  beforeEach(async () => {
+  beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
-    }).compile();
+    })
+      .overrideProvider(SnapshotCronService)
+      .useValue({})
+      .compile();
 
     app = moduleFixture.createNestApplication();
-    // 和 main.ts 保持一致：启用全局校验（否则 DTO 校验不生效，测试测不到校验行为）
-    app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+    prisma = moduleFixture.get(PrismaService);
+    await prisma.portfolio.deleteMany({
+      where: { userId: 999, name: '测试组合' },
+    });
+    // 和 main.ts 保持一致：启用全局校验和响应包装。
+    app.useGlobalPipes(
+      new ValidationPipe({ transform: true, whitelist: true }),
+    );
+    app.useGlobalInterceptors(new TransformInterceptor());
     await app.init();
   });
 
-  afterEach(async () => {
+  afterAll(async () => {
+    await prisma.portfolio.deleteMany({
+      where: { userId: 999, name: '测试组合' },
+    });
     await app.close();
   });
 
@@ -28,11 +54,14 @@ describe('PortfolioController (e2e)', () => {
         .get('/portfolio?userId=1')
         .expect(200);
 
+      const body = res.body as PortfolioListResponse;
+
       // 种子数据：稳健增值组合属于 userId=1
-      expect(Array.isArray(res.body)).toBe(true);
-      expect(res.body.length).toBeGreaterThan(0);
-      expect(res.body[0]).toHaveProperty('name');
-      expect(res.body[0]).toHaveProperty('targetTotalAmount');
+      expect(body.code).toBe(0);
+      expect(Array.isArray(body.data)).toBe(true);
+      expect(body.data.length).toBeGreaterThan(0);
+      expect(body.data[0]).toHaveProperty('name');
+      expect(body.data[0]).toHaveProperty('targetTotalAmount');
     });
 
     it('不同 userId 返回不同/空列表（隔离）', async () => {
@@ -41,9 +70,14 @@ describe('PortfolioController (e2e)', () => {
         .get('/portfolio?userId=999')
         .expect(200);
 
-      expect(Array.isArray(res.body)).toBe(true);
+      const body = res.body as PortfolioListResponse;
+
+      expect(body.code).toBe(0);
+      expect(Array.isArray(body.data)).toBe(true);
       // 隔离：不包含 userId=1 的数据
-      expect(res.body.every((p: any) => p.userId === 999)).toBe(true);
+      expect(body.data.every((portfolio) => portfolio.userId === 999)).toBe(
+        true,
+      );
     });
 
     it('缺少 userId 参数时返回 400', async () => {
@@ -55,21 +89,38 @@ describe('PortfolioController (e2e)', () => {
   });
 
   describe('POST /portfolio', () => {
-    it('当前 create 是骨架实现，返回占位字符串', async () => {
+    it('按当前 DTO 创建组合并返回统一响应', async () => {
       const res = await request(app.getHttpServer())
-        .post('/portfolio')
+        .post('/portfolio?userId=999')
         .send({
           name: '测试组合',
           targetTotalAmount: 100000,
           holdings: [
-            { assetId: 1, targetRatio: 50, rebalanceThreshold: 5 },
-            { assetId: 2, targetRatio: 50, rebalanceThreshold: 5 },
+            {
+              symbol: '510300',
+              name: '沪深300ETF',
+              assetType: 'ETF',
+              exchange: 'SH',
+              targetRatio: 50,
+              rebalanceThreshold: 5,
+            },
+            {
+              symbol: '159915',
+              name: '创业板ETF',
+              assetType: 'ETF',
+              exchange: 'SZ',
+              targetRatio: 50,
+              rebalanceThreshold: 5,
+            },
           ],
         })
         .expect(201);
 
-      // 骨架实现返回字符串，等你实现真实 create 后改这个断言
-      expect(typeof res.body).toBe('string');
+      expect(res.body).toMatchObject({
+        code: 0,
+        message: 'ok',
+        data: { message: '创建成功' },
+      });
     });
   });
 });
