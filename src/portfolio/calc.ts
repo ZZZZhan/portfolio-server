@@ -101,6 +101,9 @@ export function computeSnapshot(input: CreateSnapshotInput): SnapshotResult {
   // 3. 组合汇总（需先算 totalCost / completion，再决定 currentRatio 口径）
   //    累计投入成本（已完成交易的买入总额）—— 用于 completion 和 profitRate
   const totalCost = totalBuyAmountForAll(input.holdings);
+  // completion 内部用真实值计算（可 >1，如场内一手导致注投入略超目标），
+  // 供 isRebalancePhase 判定建仓是否完成（>=100%）；
+  // 对外返回/落库时封顶为 1（见函数末尾），展示上不超过 100%。
   const completion = input.targetTotalAmount > 0 ? totalCost / input.targetTotalAmount : 0;
 
   // 4. 当前配比与偏离 —— 按建仓阶段切换口径：
@@ -132,7 +135,8 @@ export function computeSnapshot(input: CreateSnapshotInput): SnapshotResult {
     totalCost,
     totalPnl,
     profitRate,
-    completion,
+    // 对外暴露的建仓完成度封顶 100%（内部 isRebalancePhase 判定已用真实 completion 完成）
+    completion: Math.min(completion, 1),
     holdings: holdingResults,
   };
 }
