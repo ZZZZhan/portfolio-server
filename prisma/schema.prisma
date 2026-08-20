@@ -12,12 +12,12 @@ datasource db {
 
 // ========== 标的（证券） ==========
 model Asset {
-  id        Int      @id @default(autoincrement())
-  symbol    String   @unique // 如 510300 / 513100 / 159915
+  id        Int       @id @default(autoincrement())
+  symbol    String    @unique // 如 510300 / 513100 / 159915
   name      String // 如 滇深300ETF
   type      AssetType
-  exchange Exchange // 交易所：沪/深/场外，用于拼行情源前缀（sh/sz/of）
-  createdAt DateTime @default(now())
+  exchange  Exchange // 交易所：沪/深/场外，用于拼行情源前缀（sh/sz/of）
+  createdAt DateTime  @default(now())
   holdings  Holding[]
 }
 
@@ -35,22 +35,23 @@ enum Exchange {
 
 // ========== 投资组合 ==========
 model Portfolio {
-  id                Int      @id @default(autoincrement())
-  userId            Int // M1 阶段写死 fake userId，M3 接 better-auth 后关联 user.id
+  id                Int             @id @default(autoincrement())
+  userId            String // better-auth 的 user.id 是 string
   name              String
-  targetTotalAmount Decimal  @db.Decimal(12, 2) // 目标总投入金额（用户设定）
-  createdAt         DateTime @default(now())
+  targetTotalAmount Decimal         @db.Decimal(12, 2) // 目标总投入金额（用户设定）
+  createdAt         DateTime        @default(now())
+  user              User            @relation(fields: [userId], references: [id], onDelete: Cascade)
   holdings          Holding[]
   snapshots         DailySnapshot[]
 }
 
 // ========== 持仓（组合 × 标的） ==========
 model Holding {
-  id                 Int     @id @default(autoincrement())
+  id                 Int       @id @default(autoincrement())
   portfolioId        Int
   assetId            Int
   targetRatio        Int // 目标配比 %
-  rebalanceThreshold Decimal @db.Decimal(5, 2) // 偏离阈值 %（如 5.00 = 偏离>5% 提醒再平衡）
+  rebalanceThreshold Decimal   @db.Decimal(5, 2) // 偏离阈值 %（如 5.00 = 偏离>5% 提醒再平衡）
   portfolio          Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
   asset              Asset     @relation(fields: [assetId], references: [id])
   trades             Trade[]
@@ -60,27 +61,27 @@ model Holding {
 
 // ========== 交易 ==========
 model Trade {
-  id        Int         @id @default(autoincrement())
+  id        Int            @id @default(autoincrement())
   holdingId Int
   type      TradeType // 场内/场外
   direction TradeDirection // 买入/卖出
-  amount    Decimal     @db.Decimal(12, 2) // 成交金额（必填，元）
-  shares    Decimal?    @db.Decimal(16, 4) // 份额（场内必填；场外=金额÷净值，日终补全）
-  price     Decimal?    @db.Decimal(12, 4) // 单价/净值（场内成交价；场外当日净值）
-  tradedAt  DateTime    @default(now())
-  status    TradeStatus @default(PENDING)
-  holding   Holding     @relation(fields: [holdingId], references: [id], onDelete: Cascade)
+  amount    Decimal        @db.Decimal(12, 2) // 成交金额（必填，元）
+  shares    Decimal?       @db.Decimal(16, 4) // 份额（场内必填；场外=金额÷净值，日终补全）
+  price     Decimal?       @db.Decimal(12, 4) // 单价/净值（场内成交价；场外当日净值）
+  tradedAt  DateTime       @default(now())
+  status    TradeStatus    @default(PENDING)
+  holding   Holding        @relation(fields: [holdingId], references: [id], onDelete: Cascade)
 
   @@index([holdingId, tradedAt])
 }
 
 enum TradeType {
   EXCHANGE // 场内：份额+单价，金额=份额×单价
-  OTC      // 场外：金额，份额=金额÷当日净值（日终补）
+  OTC // 场外：金额，份额=金额÷当日净值（日终补）
 }
 
 enum TradeStatus {
-  PENDING   // 份额待定（场外，净值未出）
+  PENDING // 份额待定（场外，净值未出）
   COMPLETED // 份额已确认
 }
 
@@ -91,20 +92,73 @@ enum TradeDirection {
 
 // ========== 每日快照 ==========
 model DailySnapshot {
-  id             Int     @id @default(autoincrement())
-  portfolioId    Int
-  date           DateTime @db.Date // 只存日期（当天）
+  id               Int       @id @default(autoincrement())
+  portfolioId      Int
+  date             DateTime  @db.Date // 只存日期（当天）
   // 组合级汇总
-  totalMarketValue Decimal @db.Decimal(14, 2) // 总市值
-  totalCost        Decimal @db.Decimal(14, 2) // 总成本
-  totalProfit      Decimal @db.Decimal(14, 2) // 累计收益
-  profitRate       Decimal @db.Decimal(8, 4)   // 累计收益率
-  todayProfit      Decimal @db.Decimal(14, 2) // 今日收益
-  todayProfitRate  Decimal @db.Decimal(8, 4)   // 今日收益率
-  completion       Decimal @db.Decimal(5, 2)   // 建仓完成度 %
+  totalMarketValue Decimal   @db.Decimal(14, 2) // 总市值
+  totalCost        Decimal   @db.Decimal(14, 2) // 总成本
+  totalProfit      Decimal   @db.Decimal(14, 2) // 累计收益
+  profitRate       Decimal   @db.Decimal(8, 4) // 累计收益率
+  todayProfit      Decimal   @db.Decimal(14, 2) // 今日收益
+  todayProfitRate  Decimal   @db.Decimal(8, 4) // 今日收益率
+  completion       Decimal   @db.Decimal(5, 2) // 建仓完成度 %
   // 持仓级快照（冗余，Json）
   holdings         Json
   portfolio        Portfolio @relation(fields: [portfolioId], references: [id], onDelete: Cascade)
 
   @@unique([portfolioId, date])
+}
+
+// ========== Better Auth（字段由 better-auth 规范定义，勿改名） ==========
+model User {
+  id            String      @id
+  name          String
+  email         String      @unique
+  emailVerified Boolean     @default(false)
+  image         String?
+  createdAt     DateTime    @default(now())
+  updatedAt     DateTime    @updatedAt
+  sessions      Session[]
+  accounts      Account[]
+  portfolios    Portfolio[]
+}
+
+model Session {
+  id        String   @id
+  expiresAt DateTime
+  ipAddress String?
+  userAgent String?
+  userId    String
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Account {
+  id                    String    @id
+  accountId             String
+  providerId            String
+  userId                String
+  user                  User      @relation(fields: [userId], references: [id], onDelete: Cascade)
+  accessToken           String?
+  refreshToken          String?
+  idToken               String?
+  accessTokenExpiresAt  DateTime?
+  refreshTokenExpiresAt DateTime?
+  scope                 String?
+  password              String?
+  issuer                String?   // better-auth 1.7 运行时写入（本端账户 issuer）
+  createdAt             DateTime  @default(now())
+  updatedAt             DateTime  @updatedAt
+}
+
+model Verification {
+  id         String   @id
+  identifier String
+  value      String
+  expiresAt  DateTime
+  createdAt  DateTime @default(now())
+  updatedAt  DateTime @updatedAt
 }
