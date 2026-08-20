@@ -9,6 +9,11 @@ import {
   Query,
   ParseIntPipe,
 } from '@nestjs/common';
+import {
+  Session,
+  AllowAnonymous,
+} from '@thallesp/nestjs-better-auth';
+import type { UserSession } from '@thallesp/nestjs-better-auth';
 import { PortfolioService } from './portfolio.service';
 import { TradeService } from './trade.service';
 import { SnapshotService } from './snapshot.service';
@@ -17,7 +22,14 @@ import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
 import { RecordTradeDto } from './dto/create-trade.dto';
 import { SearchAssetDto } from './dto/search-asset.dto';
+import { auth } from '../lib/auth';
 
+/**
+ * 鉴权说明：
+ * 全局 AuthGuard 默认要求登录。本控制器内所有业务路由都依赖当前登录用户，
+ * userId 通过 @Session() 从 better-auth 会话中取（值为 user.id）。
+ * 无需登录的查询类路由用 @AllowAnonymous() 标记。
+ */
 @Controller('portfolio')
 export class PortfolioController {
   constructor(
@@ -30,24 +42,23 @@ export class PortfolioController {
   @Post()
   create(
     @Body() createPortfolioDto: CreatePortfolioDto,
-    // @TODO(M3): userId 改为从 @Req() req.session 取当前登录用户
-    // 目前未接 better-auth，暂用 ?userId= 传参
-    @Query('userId', ParseIntPipe) userId: number,
+    @Session() session: UserSession<typeof auth>,
   ) {
+    const userId = session.user.id;
     return this.portfolioService.create(createPortfolioDto, userId);
   }
 
   @Get()
-  findAll(@Query('userId', ParseIntPipe) userId: number) {
-    return this.portfolioService.findAll(userId);
+  findAll(@Session() session: UserSession<typeof auth>) {
+    return this.portfolioService.findAll(session.user.id);
   }
 
   @Get(':id/trades')
   findPortfolioTrades(
     @Param('id', ParseIntPipe) portfolioId: number,
-    @Query('userId', ParseIntPipe) userId: number,
+    @Session() session: UserSession<typeof auth>,
   ) {
-    return this.tradeService.findByPortfolio(portfolioId, userId);
+    return this.tradeService.findByPortfolio(portfolioId, session.user.id);
   }
 
   @Post(':id/holdings/:holdingId/trades')
@@ -55,11 +66,14 @@ export class PortfolioController {
     @Param('id', ParseIntPipe) portfolioId: number,
     @Param('holdingId', ParseIntPipe) holdingId: number,
     @Body() recordTradeDto: RecordTradeDto,
-    // @TODO(M3): userId 改为从 @Req() req.session 取当前登录用户，去掉 query 传参
-    // 目前未接 better-auth，暂用 ?userId= 传参
-    @Query('userId', ParseIntPipe) userId: number,
+    @Session() session: UserSession<typeof auth>,
   ) {
-    return this.tradeService.create(recordTradeDto, holdingId, portfolioId, userId);
+    return this.tradeService.create(
+      recordTradeDto,
+      holdingId,
+      portfolioId,
+      session.user.id,
+    );
   }
 
   // 调试端点：手动触发快照计算 + 返回（M4 换成 cron 定时）
@@ -74,7 +88,9 @@ export class PortfolioController {
     return this.snapshotService.getLatest(id);
   }
 
+  // 标的搜索无需登录
   @Get('assets/search')
+  @AllowAnonymous() // 全局 AuthGuard 下显式放行
   searchAssets(@Query() query: SearchAssetDto) {
     return this.assetSearchService.search(query);
   }

@@ -39,7 +39,7 @@ export class TradeService {
     dto: RecordTradeDto,
     holdingId: number,
     portfolioId: number,
-    userId: number,
+    userId: string,
   ): Promise<RecordTradeResult> {
     // 1. 校验持仓属于该组合 + 组合属于当前用户（防越权）
     const holding = await this.prisma.holding.findFirst({
@@ -123,7 +123,7 @@ export class TradeService {
   }
 
   /** 查某组合下的交易（含持仓+标的，供交易列表展示） */
-  findByPortfolio(portfolioId: number, userId: number) {
+  findByPortfolio(portfolioId: number, userId: string) {
     return this.prisma.trade.findMany({
       where: { holding: { portfolioId, portfolio: { userId } } },
       include: { holding: { include: { asset: true } } },

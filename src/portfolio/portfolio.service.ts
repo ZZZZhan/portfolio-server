@@ -6,7 +6,7 @@ import { PrismaService } from 'src/prisma/prisma.service';
 @Injectable()
 export class PortfolioService {
   constructor(private prisma: PrismaService) {}
-  async create(createPortfolioDto: CreatePortfolioDto, userId: number) {
+  async create(createPortfolioDto: CreatePortfolioDto, userId: string) {
     const sum = createPortfolioDto.holdings.reduce(
       (acc, h) => acc + h.targetRatio,
       0,
@@ -49,7 +49,7 @@ export class PortfolioService {
     return { message: '创建成功' };
   }
 
-  async findAll(userId: number) {
+  async findAll(userId: string) {
     const res = await this.prisma.portfolio.findMany({
       where: {
         userId,
