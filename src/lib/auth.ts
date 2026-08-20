@@ -16,6 +16,19 @@ export const auth = betterAuth({
     provider: 'postgresql', // 项目用 PostgreSQL
   }),
   emailAndPassword: { enabled: true }, // 开启邮箱密码注册/登录
+  user: {
+    // 自定义用户字段：随 session 一起返回，前端 useSession 可直接读到。
+    // 想加更多字段就照这里的形状追加（CLI 会同步到 DB schema）。
+    additionalFields: {
+      // 行情更新模式：盘后 / 实时
+      marketUpdateMode: {
+        type: ['AFTER_CLOSE', 'REALTIME'],
+        required: false,
+        defaultValue: 'AFTER_CLOSE',
+        input: true, // 允许用户/前端修改
+      },
+    },
+  },
   trustedOrigins: [
     // 前端跨域来源（库会据此为 /api/auth/* 注入 CORS 头）
     process.env.FRONTEND_URL ?? 'http://localhost:3000',

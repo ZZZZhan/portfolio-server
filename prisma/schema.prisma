@@ -112,16 +112,18 @@ model DailySnapshot {
 
 // ========== Better Auth（字段由 better-auth 规范定义，勿改名） ==========
 model User {
-  id            String      @id
-  name          String
-  email         String      @unique
-  emailVerified Boolean     @default(false)
-  image         String?
-  createdAt     DateTime    @default(now())
-  updatedAt     DateTime    @updatedAt
-  sessions      Session[]
-  accounts      Account[]
-  portfolios    Portfolio[]
+  id                String      @id
+  name              String
+  email             String      @unique
+  emailVerified     Boolean     @default(false)
+  image             String?
+  // 自定义用户偏好字段（better-auth additionalFields；CLI 生成为 String）
+  marketUpdateMode  String      @default("AFTER_CLOSE") // AFTER_CLOSE | REALTIME
+  createdAt         DateTime    @default(now())
+  updatedAt         DateTime    @updatedAt
+  sessions          Session[]
+  accounts          Account[]
+  portfolios        Portfolio[]
 }
 
 model Session {
