@@ -1,99 +1,90 @@
 import { Test, TestingModule } from '@nestjs/testing';
 import { INestApplication, ValidationPipe } from '@nestjs/common';
 import request from 'supertest';
+import type { Agent } from 'supertest';
 import { App } from 'supertest/types';
 import { AppModule } from './../src/app.module';
 import { SnapshotCronService } from './../src/portfolio/snapshot-cron.service';
 import { TransformInterceptor } from './../src/common/transform.interceptor';
 import { PrismaService } from './../src/prisma/prisma.service';
 
-interface PortfolioListResponse {
-  code: number;
-  data: Array<{
-    userId: number;
-    name: string;
-    targetTotalAmount: string;
-  }>;
-}
-
+/**
+ * Portfolio API e2e（认证链路）。
+ *
+ * 测试缝：真实 AppModule（含 AuthModule）连真实 Postgres 测试库，
+ * 用 better-auth 注册真实用户拿会话 cookie，从而通过全局 AuthGuard。
+ * 所有数据用固定邮箱/组合名，afterAll 清理，不依赖 seed。
+ */
 describe('PortfolioController (e2e)', () => {
   let app: INestApplication<App>;
+  let agent: Agent; // 带 cookie 的请求代理
   let prisma: PrismaService;
+
+  const email = `e2e-${Date.now()}@portfolio.test`;
+  const password = 'password123';
+  const portfolioName = 'e2e 认证组合';
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
       imports: [AppModule],
     })
       .overrideProvider(SnapshotCronService)
-      .useValue({})
+      .useValue({}) // 禁掉 cron 补跑，避免测试期间写快照
       .compile();
 
     app = moduleFixture.createNestApplication();
     prisma = moduleFixture.get(PrismaService);
-    await prisma.portfolio.deleteMany({
-      where: { userId: 999, name: '测试组合' },
-    });
-    // 和 main.ts 保持一致：启用全局校验和响应包装。
-    app.useGlobalPipes(
-      new ValidationPipe({ transform: true, whitelist: true }),
-    );
+    // 和 main.ts 保持一致：启用全局 /api 前缀、校验、统一响应包装。
+    app.setGlobalPrefix('api');
+    app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
     app.useGlobalInterceptors(new TransformInterceptor());
     await app.init();
+
+    agent = request.agent(app.getHttpServer());
+    // 注册用户 → 拿到会话 cookie（HttpOnly）。
+    const res = await agent
+      .post('/api/auth/sign-up/email')
+      .set('Origin', 'http://localhost:3000')
+      .send({ name: 'e2e 用户', email, password })
+      .expect(200);
+    if (!(res.body as { token?: string }).token) {
+      throw new Error('e2e 注册未返回 token，认证链路异常');
+    }
   });
 
   afterAll(async () => {
-    await prisma.portfolio.deleteMany({
-      where: { userId: 999, name: '测试组合' },
-    });
+    // 清理该用户的所有业务数据（先业务表再由外键级联无依赖，直接按 userId 删组合即可级联 holding/trade/snapshot）
+    const user = await prisma.user.findUnique({ where: { email } });
+    if (user?.id) {
+      await prisma.portfolio.deleteMany({ where: { userId: user.id } });
+      await prisma.session.deleteMany({ where: { userId: user.id } });
+      await prisma.account.deleteMany({ where: { userId: user.id } });
+      await prisma.user.delete({ where: { id: user.id } });
+    }
     await app.close();
   });
 
-  describe('GET /portfolio', () => {
-    it('按 userId 返回该用户的组合列表', async () => {
-      const res = await request(app.getHttpServer())
-        .get('/portfolio?userId=1')
-        .expect(200);
-
-      const body = res.body as PortfolioListResponse;
-
-      // 种子数据：稳健增值组合属于 userId=1
-      expect(body.code).toBe(0);
-      expect(Array.isArray(body.data)).toBe(true);
-      expect(body.data.length).toBeGreaterThan(0);
-      expect(body.data[0]).toHaveProperty('name');
-      expect(body.data[0]).toHaveProperty('targetTotalAmount');
+  describe('GET /api/portfolio', () => {
+    it('未登录被全局 AuthGuard 拒绝（401）', async () => {
+      await request(app.getHttpServer()).get('/api/portfolio').expect(401);
     });
 
-    it('不同 userId 返回不同/空列表（隔离）', async () => {
-      // 没有 userId=999 的组合
-      const res = await request(app.getHttpServer())
-        .get('/portfolio?userId=999')
-        .expect(200);
-
-      const body = res.body as PortfolioListResponse;
-
-      expect(body.code).toBe(0);
-      expect(Array.isArray(body.data)).toBe(true);
-      // 隔离：不包含 userId=1 的数据
-      expect(body.data.every((portfolio) => portfolio.userId === 999)).toBe(
-        true,
-      );
-    });
-
-    it('缺少 userId 参数时返回 400', async () => {
-      // findAll(+userId) 传 undefined → +undefined = NaN，Prisma where userId: NaN 会报错
-      // 目前 controller 没处理缺失参数，这里先记录现状（期望 400 是未来加固方向）
-      const res = await request(app.getHttpServer()).get('/portfolio');
-      expect([400, 500]).toContain(res.status);
+    it('登录后返回该用户（空）组合列表', async () => {
+      const res = await agent.get('/api/portfolio').expect(200);
+      expect(res.body.code).toBe(0);
+      expect(Array.isArray(res.body.data)).toBe(true);
+      // 新注册用户此时还没有组合
+      expect(res.body.data).toHaveLength(0);
     });
   });
 
-  describe('POST /portfolio', () => {
-    it('按当前 DTO 创建组合并返回统一响应', async () => {
-      const res = await request(app.getHttpServer())
-        .post('/portfolio?userId=999')
+  describe('POST /api/portfolio', () => {
+    it('登录后创建组合（持仓标的自动 upsert Asset）', async () => {
+      const res = await agent
+        .post('/api/portfolio')
+        .set('Origin', 'http://localhost:3000')
         .send({
-          name: '测试组合',
+          name: portfolioName,
           targetTotalAmount: 100000,
           holdings: [
             {
@@ -101,7 +92,7 @@ describe('PortfolioController (e2e)', () => {
               name: '沪深300ETF',
               assetType: 'ETF',
               exchange: 'SH',
-              targetRatio: 50,
+              targetRatio: 60,
               rebalanceThreshold: 5,
             },
             {
@@ -109,7 +100,7 @@ describe('PortfolioController (e2e)', () => {
               name: '创业板ETF',
               assetType: 'ETF',
               exchange: 'SZ',
-              targetRatio: 50,
+              targetRatio: 40,
               rebalanceThreshold: 5,
             },
           ],
@@ -121,6 +112,34 @@ describe('PortfolioController (e2e)', () => {
         message: 'ok',
         data: { message: '创建成功' },
       });
+
+      // 组合确实入库
+      const list = await agent.get('/api/portfolio').expect(200);
+      const created = (list.body.data as Array<{ name: string }>).find(
+        (p) => p.name === portfolioName,
+      );
+      expect(created).toBeTruthy();
+    });
+
+    it('配比之和不等于 100 时返回 400', async () => {
+      const res = await agent
+        .post('/api/portfolio')
+        .set('Origin', 'http://localhost:3000')
+        .send({
+          name: '错误组合',
+          targetTotalAmount: 100000,
+          holdings: [
+            {
+              symbol: '511260',
+              name: '债券基金',
+              assetType: 'FUND',
+              exchange: 'OTC',
+              targetRatio: 30,
+            },
+          ],
+        })
+        .expect(400);
+      expect(String(res.body.message)).toContain('目标配比之和必须为 100');
     });
   });
 });
