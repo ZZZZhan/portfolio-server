@@ -119,6 +119,8 @@ model User {
   image             String?
   // 自定义用户偏好字段（better-auth additionalFields；CLI 生成为 String）
   marketUpdateMode  String      @default("AFTER_CLOSE") // AFTER_CLOSE | REALTIME
+  // 微信推送（Server酱）的 SendKey；用户未填则不推送再平衡提醒
+  sendkey           String?
   createdAt         DateTime    @default(now())
   updatedAt         DateTime    @updatedAt
   sessions          Session[]

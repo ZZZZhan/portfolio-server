@@ -3,6 +3,7 @@ import { Cron } from '@nestjs/schedule';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { SnapshotService } from './snapshot.service';
 import { PriceProvider, PriceQuery } from '../price-provider/price-provider';
+import { RebalanceNotifierService } from '../notification/rebalance-notifier.service';
 
 /**
  * 快照调度（@nestjs/schedule）。
@@ -14,6 +15,7 @@ import { PriceProvider, PriceQuery } from '../price-provider/price-provider';
  *  - 22:00  补场外份额：找所有 PENDING 场外交易（不管哪天），
  *           用最新已公布净值折算份额、置 COMPLETED，并重算受影响组合快照。
  *           幂等、可重入 —— T+2 的 QDII 在净值公布当天自然被补上。
+ *           补完后推送一次再平衡提醒（配了 SendKey 的用户）。
  *  - 启动   OnApplicationBootstrap：补跑。遍历组合，若最新快照日期早于最近一个
  *           工作日（周一~周五，节假日无法精确判断、由 onlyIfMarketToday 兜底）则补算。
  *
@@ -27,6 +29,7 @@ export class SnapshotCronService implements OnApplicationBootstrap {
     private prisma: PrismaService,
     private snapshotService: SnapshotService,
     private priceProvider: PriceProvider,
+    private rebalanceNotifier: RebalanceNotifierService,
   ) {}
 
   /** 每交易日 18:00：拉收盘价 → 写当日快照 */
@@ -64,6 +67,15 @@ export class SnapshotCronService implements OnApplicationBootstrap {
       }
     }
     this.logger.log(`22:00 补场外完成，影响 ${affected.size} 个组合`);
+    // 份额确认并重算快照后再推送一次再平衡提醒（配了 SendKey 的用户才会收到）
+    try {
+      const r = await this.rebalanceNotifier.notifyAll();
+      this.logger.log(
+        `再平衡提醒推送完成，送达 ${r.notified} 个用户，跳过 ${r.skipped}`,
+      );
+    } catch (err) {
+      this.logger.error(`再平衡提醒推送异常：${(err as Error).message}`);
+    }
   }
 
   /**

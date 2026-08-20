@@ -27,6 +27,12 @@ export const auth = betterAuth({
         defaultValue: 'AFTER_CLOSE',
         input: true, // 允许用户/前端修改
       },
+      // 微信推送 SendKey（Server酱）。用户可填、可改，未填则推送跳过。
+      sendkey: {
+        type: 'string',
+        required: false,
+        input: true, // 允许用户/前端修改
+      },
     },
   },
   trustedOrigins: [
