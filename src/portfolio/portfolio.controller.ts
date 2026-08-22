@@ -20,6 +20,7 @@ import { SnapshotService } from './snapshot.service';
 import { AssetSearchService } from './asset-search.service';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
+import { UpdateHoldingDto } from './dto/update-holding.dto';
 import { RecordTradeDto } from './dto/create-trade.dto';
 import { SearchAssetDto } from './dto/search-asset.dto';
 import { auth } from '../lib/auth';
@@ -73,6 +74,22 @@ export class PortfolioController {
       holdingId,
       portfolioId,
       session.user.id,
+    );
+  }
+
+  // 改单条持仓的偏离阈值。放在 @Patch(':id') 之前，具体路由优先
+  @Patch(':id/holdings/:holdingId')
+  updateHolding(
+    @Param('id', ParseIntPipe) portfolioId: number,
+    @Param('holdingId', ParseIntPipe) holdingId: number,
+    @Body() updateHoldingDto: UpdateHoldingDto,
+    @Session() session: UserSession<typeof auth>,
+  ) {
+    return this.portfolioService.updateHolding(
+      portfolioId,
+      holdingId,
+      session.user.id,
+      updateHoldingDto,
     );
   }
 

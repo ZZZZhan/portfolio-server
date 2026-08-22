@@ -1,6 +1,11 @@
-import { BadRequestException, Injectable } from '@nestjs/common';
+import {
+  BadRequestException,
+  Injectable,
+  NotFoundException,
+} from '@nestjs/common';
 import { CreatePortfolioDto } from './dto/create-portfolio.dto';
 import { UpdatePortfolioDto } from './dto/update-portfolio.dto';
+import { UpdateHoldingDto } from './dto/update-holding.dto';
 import { PrismaService } from 'src/prisma/prisma.service';
 
 @Injectable()
@@ -67,6 +72,36 @@ export class PortfolioService {
           orderBy: { id: 'asc' },
         },
       },
+    });
+  }
+
+  /**
+   * 修改单条持仓的再平衡偏离阈值。
+   *
+   * 不触发快照重算：阈值不进快照，RebalanceNotifierService 每次判断是否提醒时
+   * 都实时读 Holding.rebalanceThreshold，改完下一轮提醒即生效。
+   */
+  async updateHolding(
+    portfolioId: number,
+    holdingId: number,
+    userId: string,
+    updateHoldingDto: UpdateHoldingDto,
+  ) {
+    // 校验持仓属于该组合 + 组合属于当前用户（防越权），与录交易同一套前置检查
+    const holding = await this.prisma.holding.findFirst({
+      where: { id: holdingId, portfolioId, portfolio: { userId } },
+      select: { id: true },
+    });
+    if (!holding) {
+      throw new NotFoundException('持仓不存在或不属于当前用户');
+    }
+
+    return this.prisma.holding.update({
+      where: { id: holdingId },
+      data: {
+        rebalanceThreshold: String(updateHoldingDto.rebalanceThreshold), // Decimal 转字符串
+      },
+      include: { asset: true }, // 形状与 findOne 里的 holdings 一致，前端可直接替换缓存
     });
   }
 
