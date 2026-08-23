@@ -113,20 +113,31 @@ export class PortfolioController {
   }
 
   @Get(':id')
-  findOne(@Param('id', ParseIntPipe) id: number) {
-    return this.portfolioService.findOne(id);
+  findOne(
+    @Param('id', ParseIntPipe) id: number,
+    @Session() session: UserSession<typeof auth>,
+  ) {
+    return this.portfolioService.findOne(id, session.user.id);
   }
 
   @Patch(':id')
   update(
     @Param('id', ParseIntPipe) id: number,
     @Body() updatePortfolioDto: UpdatePortfolioDto,
+    @Session() session: UserSession<typeof auth>,
   ) {
-    return this.portfolioService.update(id, updatePortfolioDto);
+    return this.portfolioService.update(
+      id,
+      updatePortfolioDto,
+      session.user.id,
+    );
   }
 
   @Delete(':id')
-  remove(@Param('id', ParseIntPipe) id: number) {
-    return this.portfolioService.remove(id);
+  remove(
+    @Param('id', ParseIntPipe) id: number,
+    @Session() session: UserSession<typeof auth>,
+  ) {
+    return this.portfolioService.remove(id, session.user.id);
   }
 }
