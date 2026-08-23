@@ -4,6 +4,10 @@ import { PrismaService } from 'src/prisma/prisma.service';
 import { SnapshotService } from './snapshot.service';
 import { PriceProvider, PriceQuery } from '../price-provider/price-provider';
 import { RebalanceNotifierService } from '../notification/rebalance-notifier.service';
+import {
+  AdvisoryLockService,
+  LOCK_KEYS,
+} from '../common/advisory-lock.service';
 
 /**
  * 快照调度（@nestjs/schedule）。
@@ -20,6 +24,10 @@ import { RebalanceNotifierService } from '../notification/rebalance-notifier.ser
  *           工作日（周一~周五，节假日无法精确判断、由 onlyIfMarketToday 兜底）则补算。
  *
  * 注意：所有方法捕获异常并记日志，单组合/单交易失败不拖垮整个调度。
+ *
+ * 多实例：@nestjs/schedule 是进程内定时器，扩容后每个实例都会到点触发。
+ * 三个入口都用 advisory lock 抢占，只有拿到锁的实例真正执行 —— 快照虽是
+ * 同组合同日 upsert（幂等），但再平衡微信推送重复发用户就会收到多条。
  */
 @Injectable()
 export class SnapshotCronService implements OnApplicationBootstrap {
@@ -30,19 +38,32 @@ export class SnapshotCronService implements OnApplicationBootstrap {
     private snapshotService: SnapshotService,
     private priceProvider: PriceProvider,
     private rebalanceNotifier: RebalanceNotifierService,
+    private lock: AdvisoryLockService,
   ) {}
 
   /** 每交易日 18:00：拉收盘价 → 写当日快照 */
   @Cron('0 0 18 * * *')
   async dailySnapshot() {
+    await this.lock.runExclusive(
+      LOCK_KEYS.dailySnapshot,
+      '18:00 日终快照',
+      () => this.runDailySnapshot(),
+    );
+  }
+
+  private async runDailySnapshot() {
     this.logger.log('18:00 日终快照开始');
-    const portfolios = await this.prisma.portfolio.findMany({ select: { id: true, name: true } });
+    const portfolios = await this.prisma.portfolio.findMany({
+      select: { id: true, name: true },
+    });
     let written = 0;
     for (const p of portfolios) {
       try {
-        const r = await this.snapshotService.calculateAndSave(p.id, new Date(), {
-          onlyIfMarketToday: true,
-        });
+        const r = await this.snapshotService.calculateAndSave(
+          p.id,
+          new Date(),
+          { onlyIfMarketToday: true },
+        );
         if (r.written) written++;
         else this.logger.debug(`组合 ${p.id} 非交易日/行情未收盘，跳过`);
       } catch (err) {
@@ -55,6 +76,14 @@ export class SnapshotCronService implements OnApplicationBootstrap {
   /** 每交易日 22:00：补全所有 PENDING 场外交易份额 + 重算受影响组合快照 */
   @Cron('0 0 22 * * *')
   async settleOtcTrades() {
+    await this.lock.runExclusive(
+      LOCK_KEYS.settleOtcTrades,
+      '22:00 补场外份额',
+      () => this.runSettleOtcTrades(),
+    );
+  }
+
+  private async runSettleOtcTrades() {
     this.logger.log('22:00 补场外份额开始');
     const affected = await this.settlePendingTrades();
     for (const portfolioId of affected) {
@@ -63,7 +92,9 @@ export class SnapshotCronService implements OnApplicationBootstrap {
           onlyIfMarketToday: true,
         });
       } catch (err) {
-        this.logger.error(`补场外后重算组合 ${portfolioId} 失败：${(err as Error).message}`);
+        this.logger.error(
+          `补场外后重算组合 ${portfolioId} 失败：${(err as Error).message}`,
+        );
       }
     }
     this.logger.log(`22:00 补场外完成，影响 ${affected.size} 个组合`);
@@ -92,7 +123,11 @@ export class SnapshotCronService implements OnApplicationBootstrap {
         status: 'PENDING',
         holding: { asset: { type: 'FUND' } },
       },
-      include: { holding: { include: { portfolio: { select: { id: true } }, asset: true } } },
+      include: {
+        holding: {
+          include: { portfolio: { select: { id: true } }, asset: true },
+        },
+      },
     });
     if (pending.length === 0) return affected;
 
@@ -131,8 +166,17 @@ export class SnapshotCronService implements OnApplicationBootstrap {
 
   /** 启动补跑：组合最新快照日期早于最近工作日则补算一次 */
   async onApplicationBootstrap() {
+    // 多实例同时部署时只让一个实例补跑；抢不到的实例跳过即可，数据是共享的
+    await this.lock.runExclusive(LOCK_KEYS.startupBackfill, '启动补跑', () =>
+      this.runStartupBackfill(),
+    );
+  }
+
+  private async runStartupBackfill() {
     this.logger.log('启动补跑检查');
-    const portfolios = await this.prisma.portfolio.findMany({ select: { id: true, name: true } });
+    const portfolios = await this.prisma.portfolio.findMany({
+      select: { id: true, name: true },
+    });
     const lastTradeDay = this.lastTradeDay();
     let backfilled = 0;
     for (const p of portfolios) {
@@ -143,9 +187,11 @@ export class SnapshotCronService implements OnApplicationBootstrap {
         });
         if (latest && this.asDateOnly(latest.date) >= lastTradeDay) continue; // 已有最近交易日快照
 
-        const r = await this.snapshotService.calculateAndSave(p.id, new Date(), {
-          onlyIfMarketToday: true,
-        });
+        const r = await this.snapshotService.calculateAndSave(
+          p.id,
+          new Date(),
+          { onlyIfMarketToday: true },
+        );
         if (r.written) {
           backfilled++;
           this.logger.log(`补跑组合 ${p.id} (${p.name})`);
@@ -154,7 +200,8 @@ export class SnapshotCronService implements OnApplicationBootstrap {
         this.logger.error(`补跑组合 ${p.id} 失败：${(err as Error).message}`);
       }
     }
-    if (backfilled > 0) this.logger.log(`启动补跑完成，补算 ${backfilled} 个组合`);
+    if (backfilled > 0)
+      this.logger.log(`启动补跑完成，补算 ${backfilled} 个组合`);
   }
 
   /** 最近一个工作日（跳过周六日，节假日无法判断、由 onlyIfMarketToday 兜底）。
@@ -163,10 +210,17 @@ export class SnapshotCronService implements OnApplicationBootstrap {
     const d = new Date();
     const day = d.getDay();
     let offset = 0;
-    if (day === 0) offset = -2; // 周日 → 上周五
+    if (day === 0)
+      offset = -2; // 周日 → 上周五
     else if (day === 6) offset = -1; // 周六 → 上周五
-    const target = new Date(d.getFullYear(), d.getMonth(), d.getDate() + offset);
-    return new Date(Date.UTC(target.getFullYear(), target.getMonth(), target.getDate()));
+    const target = new Date(
+      d.getFullYear(),
+      d.getMonth(),
+      d.getDate() + offset,
+    );
+    return new Date(
+      Date.UTC(target.getFullYear(), target.getMonth(), target.getDate()),
+    );
   }
 
   /** 与 SnapshotService.asDateOnly 同口径（本地年月日 → UTC 0 点） */

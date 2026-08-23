@@ -8,6 +8,7 @@ import { PortfolioController } from './portfolio.controller';
 import { PriceProviderModule } from '../price-provider/price-provider.module';
 import { NotificationModule } from '../notification/notification.module';
 import { RebalanceNotifierService } from '../notification/rebalance-notifier.service';
+import { AdvisoryLockService } from '../common/advisory-lock.service';
 
 @Module({
   // PriceProviderModule: 供 SnapshotService / CronService 注入行情源
@@ -21,6 +22,7 @@ import { RebalanceNotifierService } from '../notification/rebalance-notifier.ser
     SnapshotCronService,
     AssetSearchService,
     RebalanceNotifierService,
+    AdvisoryLockService, // 定时任务跨实例互斥（见 SnapshotCronService）
   ],
 })
 export class PortfolioModule {}
