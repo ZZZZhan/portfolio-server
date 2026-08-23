@@ -38,6 +38,13 @@ export class SinaPriceProvider implements PriceProvider {
 
   private static readonly QUOTE_URL = 'http://hq.sinajs.cn/list=';
   private static readonly REFERER = 'https://finance.sina.com.cn';
+  /**
+   * 单次请求的标的数上限。
+   *
+   * 全部 symbol 拼在 URL 的 query 里，每个约 11 字节（前缀 2 + 代码 6~8 + 逗号），
+   * 100 个约 1.1KB，留足余量避开 URL 长度限制。分批之间串行，不并发压源站。
+   */
+  private static readonly BATCH_SIZE = 100;
 
   constructor(@Optional() @Inject(PRICE_HTTP_FETCHER) fetcher?: HttpFetcher) {
     this.fetcher = fetcher ?? defaultFetcher;
@@ -46,6 +53,19 @@ export class SinaPriceProvider implements PriceProvider {
   async getPrices(queries: PriceQuery[]): Promise<PriceResult[]> {
     if (queries.length === 0) return [];
 
+    const size = SinaPriceProvider.BATCH_SIZE;
+    if (queries.length <= size) return this.fetchBatch(queries);
+
+    // 超出单批上限：切片串行取，单批失败只丢那一批（降级粒度更细）
+    const results: PriceResult[] = [];
+    for (let i = 0; i < queries.length; i += size) {
+      results.push(...(await this.fetchBatch(queries.slice(i, i + size))));
+    }
+    return results;
+  }
+
+  /** 取一批（不超过 BATCH_SIZE 个）标的的行情 */
+  private async fetchBatch(queries: PriceQuery[]): Promise<PriceResult[]> {
     // 1. 拼 symbol 前缀，记录原始 symbol 以便回填
     const prefixed = queries.map((q) => ({
       prefix: this.prefixOf(q.exchange),

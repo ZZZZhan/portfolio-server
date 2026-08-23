@@ -2,11 +2,7 @@ import { Injectable } from '@nestjs/common';
 import { Prisma, Exchange } from '../generated/prisma/client';
 import { PrismaService } from 'src/prisma/prisma.service';
 import { PriceProvider } from '../price-provider/price-provider';
-import {
-  computeSnapshot,
-  SnapshotResult,
-  TradeInput,
-} from './calc';
+import { computeSnapshot, SnapshotResult, TradeInput } from './calc';
 
 /**
  * calculateAndSave 返回值：在纯计算结果上追加行情日期元信息。
@@ -19,6 +15,20 @@ export type SnapshotWithDate = SnapshotResult & {
   written: boolean; // 本次是否真的落库（onlyIfMarketToday 时非当日收盘则不写）
 };
 
+/**
+ * 一轮批量计算共用的行情快照。
+ *
+ * 逐组合各取一次价时，同一个标的会被不同用户的组合重复拉（100 个组合都持有
+ * 510300 就拉 100 次）。预取按 symbol 去重、一次拿全，外部请求数从
+ * O(组合数) 降到 O(去重标的数 / 批大小)。
+ */
+export interface PrefetchedPrices {
+  /** { symbol: 最新价 }，源没返回的标的不在表里，由各组合自行兜底 */
+  prices: Record<string, number>;
+  /** 本批行情的最新日期，全部取价失败为 null */
+  marketDate: string | null;
+}
+
 @Injectable()
 export class SnapshotService {
   constructor(
@@ -26,11 +36,42 @@ export class SnapshotService {
     private priceProvider: PriceProvider, // 行情源，可注入替换（Sina / 未来 Tencent / 测试 fake）
   ) {}
 
+  /**
+   * 为一批组合预取行情：取这些组合持有的标的并集，去重后批量拉一次。
+   *
+   * 结果传给 calculateAndSave 的 options.prefetched，整轮只打一次行情源。
+   * 取价失败不抛错（沿用 PriceProvider 的降级约定），缺的标的各组合走自己的兜底。
+   *
+   * @param portfolioIds 限定组合；不传表示全部组合
+   */
+  async prefetchPrices(portfolioIds?: number[]): Promise<PrefetchedPrices> {
+    // asset.symbol 唯一，按「被持有」过滤即天然去重
+    const assets = await this.prisma.asset.findMany({
+      where: {
+        holdings: portfolioIds
+          ? { some: { portfolioId: { in: portfolioIds } } }
+          : { some: {} },
+      },
+      select: { symbol: true, exchange: true },
+    });
+    if (assets.length === 0) return { prices: {}, marketDate: null };
+
+    const fetched = await this.priceProvider.getPrices(assets);
+    return {
+      prices: Object.fromEntries(fetched.map((r) => [r.symbol, r.price])),
+      marketDate: this.latestDate(fetched),
+    };
+  }
+
   /** 计算某组合的当日快照并写入 DailySnapshot（同组合同日 upsert） */
   async calculateAndSave(
     portfolioId: number,
     date = new Date(),
-    options: { onlyIfMarketToday?: boolean } = {},
+    options: {
+      onlyIfMarketToday?: boolean;
+      /** 批量场景下由 prefetchPrices 预取的行情，省掉本组合自己再打一次源 */
+      prefetched?: PrefetchedPrices;
+    } = {},
   ): Promise<SnapshotWithDate> {
     const onlyIfMarketToday = options.onlyIfMarketToday ?? false;
     // 1. 查组合（含 targetTotalAmount）
@@ -46,7 +87,10 @@ export class SnapshotService {
     });
 
     // 3. 批量取价（行情源）+ 本次行情日期
-    const { prices, marketDate } = await this.fetchPrices(holdings);
+    const { prices, marketDate } = await this.fetchPrices(
+      holdings,
+      options.prefetched,
+    );
 
     // 4. 组装 computeSnapshot 输入
     const input = {
@@ -117,28 +161,38 @@ export class SnapshotService {
    *
    * marketDate：取自行情源返回的最新日期。若行情源一项都没返回
    * （全部兜底），为 null —— 表示今天无真实收盘行情，cron 据此决定是否落当日快照。
+   *
+   * prefetched 有值时直接用它，不再打行情源；兜底逻辑照旧（兜底要看本组合自己的
+   * 成交价，没法预取）。
    */
   private async fetchPrices(
     holdings: {
       asset: { symbol: string; exchange: Exchange };
       trades: { price: Prisma.Decimal | null; status: string }[];
     }[],
+    prefetched?: PrefetchedPrices,
   ): Promise<{ prices: Record<string, number>; marketDate: string | null }> {
-    const prices: Record<string, number> = {};
+    let prices: Record<string, number>;
+    let marketDate: string | null;
 
-    // 行情源取价
-    const fetched = await this.priceProvider.getPrices(
-      holdings.map((h) => ({
-        symbol: h.asset.symbol,
-        exchange: h.asset.exchange,
-      })),
-    );
-    for (const r of fetched) prices[r.symbol] = r.price;
-
-    // 本次行情日期：取行情源返回的最新日期（场外净值可能晚出，不影响判断今日）
-    let marketDate: string | null = null;
-    for (const r of fetched) {
-      if (r.date && (!marketDate || r.date > marketDate)) marketDate = r.date;
+    if (prefetched) {
+      // 只挑本组合用得上的，避免把整轮的价格表塞进单组合的计算输入
+      prices = {};
+      for (const h of holdings) {
+        const p = prefetched.prices[h.asset.symbol];
+        if (p != null) prices[h.asset.symbol] = p;
+      }
+      marketDate = prefetched.marketDate;
+    } else {
+      const fetched = await this.priceProvider.getPrices(
+        holdings.map((h) => ({
+          symbol: h.asset.symbol,
+          exchange: h.asset.exchange,
+        })),
+      );
+      prices = Object.fromEntries(fetched.map((r) => [r.symbol, r.price]));
+      // 本次行情日期：取行情源返回的最新日期（场外净值可能晚出，不影响判断今日）
+      marketDate = this.latestDate(fetched);
     }
 
     // 行情缺失的标的，用最近一次 COMPLETED 成交价兜底
@@ -155,13 +209,20 @@ export class SnapshotService {
     return { prices, marketDate };
   }
 
+  /** 一组取价结果里的最新行情日期；空结果为 null */
+  private latestDate(fetched: { date: string }[]): string | null {
+    let latest: string | null = null;
+    for (const r of fetched) {
+      if (r.date && (!latest || r.date > latest)) latest = r.date;
+    }
+    return latest;
+  }
+
   /** 只取日期部分（当天凌晨），用于快照键与昨日查询。
    *  用本地年月日构造 UTC 0 点，避免 setHours(0,0,0,0) 在非 UTC 时区下
    *  转 UTC 后日期前移一天（Postgres @db.Date 截取 UTC 日期会错位）。 */
   private asDateOnly(d: Date): Date {
-    return new Date(
-      Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()),
-    );
+    return new Date(Date.UTC(d.getFullYear(), d.getMonth(), d.getDate()));
   }
 
   /** 写快照行（含组合配比序列化的 holdings Json） */

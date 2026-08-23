@@ -56,13 +56,21 @@ export class SnapshotCronService implements OnApplicationBootstrap {
     const portfolios = await this.prisma.portfolio.findMany({
       select: { id: true, name: true },
     });
+    // 全部组合的标的并集，只打一次行情源；逐组合各取一次会把同一标的重复拉 N 遍
+    const prefetched = await this.snapshotService.prefetchPrices();
+    this.logger.log(
+      `预取行情：${Object.keys(prefetched.prices).length} 个标的，行情日期 ${prefetched.marketDate ?? '无'}`,
+    );
     let written = 0;
     for (const p of portfolios) {
       try {
         const r = await this.snapshotService.calculateAndSave(
           p.id,
           new Date(),
-          { onlyIfMarketToday: true },
+          {
+            onlyIfMarketToday: true,
+            prefetched,
+          },
         );
         if (r.written) written++;
         else this.logger.debug(`组合 ${p.id} 非交易日/行情未收盘，跳过`);
@@ -86,10 +94,16 @@ export class SnapshotCronService implements OnApplicationBootstrap {
   private async runSettleOtcTrades() {
     this.logger.log('22:00 补场外份额开始');
     const affected = await this.settlePendingTrades();
+    // 只预取受影响组合的标的（通常只有少数几个组合补到份额）
+    const prefetched =
+      affected.size > 0
+        ? await this.snapshotService.prefetchPrices([...affected])
+        : undefined;
     for (const portfolioId of affected) {
       try {
         await this.snapshotService.calculateAndSave(portfolioId, new Date(), {
           onlyIfMarketToday: true,
+          prefetched,
         });
       } catch (err) {
         this.logger.error(
@@ -178,7 +192,9 @@ export class SnapshotCronService implements OnApplicationBootstrap {
       select: { id: true, name: true },
     });
     const lastTradeDay = this.lastTradeDay();
-    let backfilled = 0;
+
+    // 先筛出快照过期的组合：多数情况下一个都不用补，不该为此白打一次行情源
+    const stale: { id: number; name: string }[] = [];
     for (const p of portfolios) {
       try {
         const latest = await this.prisma.dailySnapshot.findFirst({
@@ -186,11 +202,28 @@ export class SnapshotCronService implements OnApplicationBootstrap {
           orderBy: { date: 'desc' },
         });
         if (latest && this.asDateOnly(latest.date) >= lastTradeDay) continue; // 已有最近交易日快照
+        stale.push(p);
+      } catch (err) {
+        this.logger.error(
+          `检查组合 ${p.id} 快照失败：${(err as Error).message}`,
+        );
+      }
+    }
+    if (stale.length === 0) return;
 
+    const prefetched = await this.snapshotService.prefetchPrices(
+      stale.map((p) => p.id),
+    );
+    let backfilled = 0;
+    for (const p of stale) {
+      try {
         const r = await this.snapshotService.calculateAndSave(
           p.id,
           new Date(),
-          { onlyIfMarketToday: true },
+          {
+            onlyIfMarketToday: true,
+            prefetched,
+          },
         );
         if (r.written) {
           backfilled++;
