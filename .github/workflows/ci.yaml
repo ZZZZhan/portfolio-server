@@ -1,0 +1,74 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: lint / build / test / e2e
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: nest_user
+          POSTGRES_PASSWORD: nest_password
+          POSTGRES_DB: nest_db
+        ports:
+          - 5432:5432
+        # e2e 连真实 PostgreSQL（复刻 docker-compose 的账号库）
+        options: >-
+          --health-cmd "pg_isready -U nest_user -d nest_db"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      DATABASE_URL: postgresql://nest_user:nest_password@localhost:5432/nest_db
+      PORT: 3001
+      BETTER_AUTH_SECRET: ci-only-secret
+      BETTER_AUTH_URL: http://localhost:3001
+      FRONTEND_URL: http://localhost:3000
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      # Prisma client 生成到 src/generated（被 .gitignore 排除，CI 需重新生成）
+      - name: Generate Prisma Client
+        run: pnpm prisma generate
+
+      - name: Apply migrations
+        run: pnpm prisma migrate deploy
+
+      # CI 用不带 --fix 的 eslint：任何格式/类型问题都让这里失败
+      - name: Lint
+        run: pnpm exec eslint "{src,apps,libs,test}/**/*.ts"
+
+      - name: Build
+        run: pnpm run build
+
+      - name: Unit tests
+        run: pnpm test --runInBand
+
+      - name: E2E tests
+        run: pnpm run test:e2e --runInBand

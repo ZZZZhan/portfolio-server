@@ -121,6 +121,8 @@ pnpm run lint                       # ESLint
 
 e2e 会连本地测试库（`DATABASE_URL`）并注册临时用户，结束后自动清理（需先 `docker compose up -d` 起库）。
 
+CI（GitHub Actions，`.github/workflows/ci.yaml`）：push/PR 时在独立 Postgres 服务上跑 lint（不带 `--fix`，严格校验）→ build → 单测 → e2e。
+
 ## Docker 部署
 
 ```bash
