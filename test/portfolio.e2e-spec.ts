@@ -21,6 +21,7 @@ describe('PortfolioController (e2e)', () => {
   let prisma: PrismaService;
 
   const email = `e2e-${Date.now()}@portfolio.test`;
+  const userBEmail = `e2e-${Date.now()}-b@portfolio.test`;
   const password = 'password123';
   const portfolioName = 'e2e 认证组合';
 
@@ -54,12 +55,14 @@ describe('PortfolioController (e2e)', () => {
 
   afterAll(async () => {
     // 清理该用户的所有业务数据（先业务表再由外键级联无依赖，直接按 userId 删组合即可级联 holding/trade/snapshot）
-    const user = await prisma.user.findUnique({ where: { email } });
-    if (user?.id) {
-      await prisma.portfolio.deleteMany({ where: { userId: user.id } });
-      await prisma.session.deleteMany({ where: { userId: user.id } });
-      await prisma.account.deleteMany({ where: { userId: user.id } });
-      await prisma.user.delete({ where: { id: user.id } });
+    for (const mail of [email, userBEmail]) {
+      const user = await prisma.user.findUnique({ where: { email: mail } });
+      if (user?.id) {
+        await prisma.portfolio.deleteMany({ where: { userId: user.id } });
+        await prisma.session.deleteMany({ where: { userId: user.id } });
+        await prisma.account.deleteMany({ where: { userId: user.id } });
+        await prisma.user.delete({ where: { id: user.id } });
+      }
     }
     await app.close();
   });
@@ -140,6 +143,48 @@ describe('PortfolioController (e2e)', () => {
         })
         .expect(400);
       expect(String(res.body.message)).toContain('目标配比之和必须为 100');
+    });
+  });
+
+  describe('快照接口数据隔离', () => {
+    let portfolioId: number;
+    let userBAgent: Agent;
+
+    beforeAll(async () => {
+      // 取 userA（现有 agent）在前置用例里创建的组合 id
+      const list = await agent.get('/api/portfolio').expect(200);
+      const created = (
+        list.body.data as Array<{ id: number; name: string }>
+      ).find((p) => p.name === portfolioName);
+      if (!created) throw new Error('未找到前置创建的组合');
+      portfolioId = created.id;
+
+      // 注册独立用户 userB，用于验证跨用户数据隔离
+      userBAgent = request.agent(app.getHttpServer());
+      const res = await userBAgent
+        .post('/api/auth/sign-up/email')
+        .set('Origin', 'http://localhost:3000')
+        .send({ name: 'e2e 用户B', email: userBEmail, password })
+        .expect(200);
+      if (!(res.body as { token?: string }).token) {
+        throw new Error('e2e 注册 userB 未返回 token，认证链路异常');
+      }
+    });
+
+    it('userB 读取他人组合快照返回 404', async () => {
+      await userBAgent
+        .get(`/api/portfolio/${portfolioId}/snapshot`)
+        .expect(404);
+    });
+
+    it('userB 触发他人组合快照计算返回 404（且不落库）', async () => {
+      await userBAgent
+        .post(`/api/portfolio/${portfolioId}/snapshot`)
+        .expect(404);
+    });
+
+    it('userB 读取他人组合详情返回 404', async () => {
+      await userBAgent.get(`/api/portfolio/${portfolioId}`).expect(404);
     });
   });
 });

@@ -93,15 +93,23 @@ export class PortfolioController {
     );
   }
 
-  // 调试端点：手动触发快照计算 + 返回（M4 换成 cron 定时）
+  // 调试端点：手动触发快照计算 + 返回（M4 换成 cron 定时）。先校验组合归属防越权。
   @Post(':id/snapshot')
-  runSnapshot(@Param('id', ParseIntPipe) id: number) {
+  async runSnapshot(
+    @Param('id', ParseIntPipe) id: number,
+    @Session() session: UserSession<typeof auth>,
+  ) {
+    await this.portfolioService.assertOwned(id, session.user.id);
     return this.snapshotService.calculateAndSave(id);
   }
 
-  // 读取某组合最新快照（不触发计算）
+  // 读取某组合最新快照（不触发计算）。先校验组合归属防越权。
   @Get(':id/snapshot')
-  getLatestSnapshot(@Param('id', ParseIntPipe) id: number) {
+  async getLatestSnapshot(
+    @Param('id', ParseIntPipe) id: number,
+    @Session() session: UserSession<typeof auth>,
+  ) {
+    await this.portfolioService.assertOwned(id, session.user.id);
     return this.snapshotService.getLatest(id);
   }
 

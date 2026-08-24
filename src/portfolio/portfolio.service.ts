@@ -16,6 +16,21 @@ export class PortfolioService {
     private snapshotService: SnapshotService,
   ) {}
 
+  /**
+   * 校验组合存在且属于当前用户，否则抛 NotFoundException。
+   * 组合级资源的归属校验都走这里（防越权：用户只能操作自己的组合）。
+   */
+  async assertOwned(id: number, userId: string): Promise<{ id: number }> {
+    const portfolio = await this.prisma.portfolio.findFirst({
+      where: { id, userId },
+      select: { id: true },
+    });
+    if (!portfolio) {
+      throw new NotFoundException('组合不存在或不属于当前用户');
+    }
+    return portfolio;
+  }
+
   /** 目标配比之和必须为 100（建组合与改组合共用） */
   private assertRatioSum(holdings: HoldingInput[]) {
     const sum = holdings.reduce((acc, h) => acc + h.targetRatio, 0);
@@ -68,8 +83,10 @@ export class PortfolioService {
     return res;
   }
 
-  /** 组合详情（持仓骨架）。限定 userId —— 组合详情含持仓配比，不该跨用户可读 */
-  findOne(id: number, userId: string) {
+  /** 组合详情（持仓骨架）。限定 userId —— 组合详情含持仓配比，不该跨用户可读
+   *  组合不存在或不属于当前用户 → 404（与其它组合级端点一致，而非返回 null） */
+  async findOne(id: number, userId: string) {
+    await this.assertOwned(id, userId);
     return this.prisma.portfolio.findFirst({
       where: { id, userId },
       include: {
@@ -207,14 +224,7 @@ export class PortfolioService {
    * 不可恢复 —— 调用方须先做二次确认。
    */
   async remove(id: number, userId: string) {
-    const portfolio = await this.prisma.portfolio.findFirst({
-      where: { id, userId },
-      select: { id: true },
-    });
-    if (!portfolio) {
-      throw new NotFoundException('组合不存在或不属于当前用户');
-    }
-
+    await this.assertOwned(id, userId);
     await this.prisma.portfolio.delete({ where: { id } });
     return { message: '删除成功' };
   }
