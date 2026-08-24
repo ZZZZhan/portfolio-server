@@ -108,7 +108,10 @@ export class RebalanceNotifierService {
       where: { portfolioId: { in: portfolios.map((p) => p.id) } },
       include: { asset: true },
     });
-    const holdingsByPortfolio = new Map<number, (Holding & { asset: { symbol: string; name: string } })[]>();
+    const holdingsByPortfolio = new Map<
+      number,
+      (Holding & { asset: { symbol: string; name: string } })[]
+    >();
     for (const h of holdings) {
       const list = holdingsByPortfolio.get(h.portfolioId) ?? [];
       list.push(h);
@@ -147,7 +150,10 @@ export class RebalanceNotifierService {
       }
       // 发送失败：r.ok=false，不 set sentAny，最终该用户按本次跳过计
     }
-    return { ok: sentAny, reason: sentAny ? undefined : '无超阈值项或推送失败' };
+    return {
+      ok: sentAny,
+      reason: sentAny ? undefined : '无超阈值项或推送失败',
+    };
   }
 
   /**

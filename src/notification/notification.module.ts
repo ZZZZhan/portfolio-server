@@ -1,5 +1,9 @@
 import { Module } from '@nestjs/common';
-import { NotificationProvider, NotificationMessage, NotificationResult } from './notification';
+import {
+  NotificationProvider,
+  NotificationMessage,
+  NotificationResult,
+} from './notification';
 import { ServerChanProvider } from './server-chan.provider';
 
 /**

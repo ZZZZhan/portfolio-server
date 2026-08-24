@@ -8,6 +8,13 @@ import { SnapshotCronService } from './../src/portfolio/snapshot-cron.service';
 import { TransformInterceptor } from './../src/common/transform.interceptor';
 import { PrismaService } from './../src/prisma/prisma.service';
 
+/** 统一响应体形状（与 TransformInterceptor 一致），用于类型化解 supertest 的 any body */
+interface ApiResponse<T = unknown> {
+  code: number;
+  message: string;
+  data: T;
+}
+
 /**
  * Portfolio API e2e（认证链路）。
  *
@@ -37,7 +44,9 @@ describe('PortfolioController (e2e)', () => {
     prisma = moduleFixture.get(PrismaService);
     // 和 main.ts 保持一致：启用全局 /api 前缀、校验、统一响应包装。
     app.setGlobalPrefix('api');
-    app.useGlobalPipes(new ValidationPipe({ transform: true, whitelist: true }));
+    app.useGlobalPipes(
+      new ValidationPipe({ transform: true, whitelist: true }),
+    );
     app.useGlobalInterceptors(new TransformInterceptor());
     await app.init();
 
@@ -73,11 +82,12 @@ describe('PortfolioController (e2e)', () => {
     });
 
     it('登录后返回该用户（空）组合列表', async () => {
-      const res = await agent.get('/api/portfolio').expect(200);
-      expect(res.body.code).toBe(0);
-      expect(Array.isArray(res.body.data)).toBe(true);
+      const res = (await agent.get('/api/portfolio').expect(200))
+        .body as ApiResponse<unknown[]>;
+      expect(res.code).toBe(0);
+      expect(Array.isArray(res.data)).toBe(true);
       // 新注册用户此时还没有组合
-      expect(res.body.data).toHaveLength(0);
+      expect(res.data).toHaveLength(0);
     });
   });
 
@@ -117,10 +127,9 @@ describe('PortfolioController (e2e)', () => {
       });
 
       // 组合确实入库
-      const list = await agent.get('/api/portfolio').expect(200);
-      const created = (list.body.data as Array<{ name: string }>).find(
-        (p) => p.name === portfolioName,
-      );
+      const list = (await agent.get('/api/portfolio').expect(200))
+        .body as ApiResponse<Array<{ id: number; name: string }>>;
+      const created = list.data.find((p) => p.name === portfolioName);
       expect(created).toBeTruthy();
     });
 
@@ -142,7 +151,8 @@ describe('PortfolioController (e2e)', () => {
           ],
         })
         .expect(400);
-      expect(String(res.body.message)).toContain('目标配比之和必须为 100');
+      const body = res.body as ApiResponse<unknown>;
+      expect(String(body.message)).toContain('目标配比之和必须为 100');
     });
   });
 
@@ -152,10 +162,9 @@ describe('PortfolioController (e2e)', () => {
 
     beforeAll(async () => {
       // 取 userA（现有 agent）在前置用例里创建的组合 id
-      const list = await agent.get('/api/portfolio').expect(200);
-      const created = (
-        list.body.data as Array<{ id: number; name: string }>
-      ).find((p) => p.name === portfolioName);
+      const list = (await agent.get('/api/portfolio').expect(200))
+        .body as ApiResponse<Array<{ id: number; name: string }>>;
+      const created = list.data.find((p) => p.name === portfolioName);
       if (!created) throw new Error('未找到前置创建的组合');
       portfolioId = created.id;
 

@@ -68,7 +68,8 @@ export function computeSnapshot(input: CreateSnapshotInput): SnapshotResult {
         totalBuyShares += t.shares!;
       } else {
         // SELL：卖出前用当前成本均价计算该笔已实现盈亏
-        const avgCostBefore = totalBuyShares > 0 ? totalBuyAmount / totalBuyShares : 0;
+        const avgCostBefore =
+          totalBuyShares > 0 ? totalBuyAmount / totalBuyShares : 0;
         realizedPnl += (t.price! - avgCostBefore) * t.shares!;
         totalSellShares += t.shares!;
       }
@@ -96,7 +97,10 @@ export function computeSnapshot(input: CreateSnapshotInput): SnapshotResult {
   });
 
   // 2. 组合总市值（各持仓市值之和）
-  const totalMarketValue = holdingResults.reduce((s, h) => s + h.marketValue, 0);
+  const totalMarketValue = holdingResults.reduce(
+    (s, h) => s + h.marketValue,
+    0,
+  );
 
   // 3. 组合汇总（需先算 totalCost / completion，再决定 currentRatio 口径）
   //    累计投入成本（已完成交易的买入总额）—— 用于 completion 和 profitRate
@@ -104,7 +108,8 @@ export function computeSnapshot(input: CreateSnapshotInput): SnapshotResult {
   // completion 内部用真实值计算（可 >1，如场内一手导致注投入略超目标），
   // 供 isRebalancePhase 判定建仓是否完成（>=100%）；
   // 对外返回/落库时封顶为 1（见函数末尾），展示上不超过 100%。
-  const completion = input.targetTotalAmount > 0 ? totalCost / input.targetTotalAmount : 0;
+  const completion =
+    input.targetTotalAmount > 0 ? totalCost / input.targetTotalAmount : 0;
 
   // 4. 当前配比与偏离 —— 按建仓阶段切换口径：
   //    - 建仓未完成（completion < 100%）：不提醒偏离，currentRatio/deviation 置 0
@@ -114,7 +119,8 @@ export function computeSnapshot(input: CreateSnapshotInput): SnapshotResult {
   const isRebalancePhase = completion >= 1;
   for (const h of holdingResults) {
     if (isRebalancePhase) {
-      h.currentRatio = totalMarketValue > 0 ? h.marketValue / totalMarketValue : 0;
+      h.currentRatio =
+        totalMarketValue > 0 ? h.marketValue / totalMarketValue : 0;
       h.deviation = h.currentRatio - h.targetRatio;
     } else {
       h.currentRatio = 0;

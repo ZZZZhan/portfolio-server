@@ -1,6 +1,6 @@
 import { Injectable, NotFoundException } from '@nestjs/common';
 import { PrismaService } from 'src/prisma/prisma.service';
-import { RecordTradeDto } from './dto/create-trade.dto';
+import { RecordTradeDto, TradeType } from './dto/create-trade.dto';
 import { SnapshotService } from './snapshot.service';
 
 /**
@@ -20,7 +20,7 @@ export interface RecordTradeResult {
     status: string;
     tradedAt: Date;
   };
-  snapshot: unknown | null;
+  snapshot: unknown;
 }
 
 @Injectable()
@@ -62,7 +62,7 @@ export class TradeService {
     let amount: number;
     let status: 'COMPLETED' | 'PENDING';
 
-    if (dto.type === 'EXCHANGE') {
+    if (dto.type === TradeType.EXCHANGE) {
       shares = dto.shares;
       price = dto.price;
       amount = (shares ?? 0) * (price ?? 0);
@@ -92,14 +92,14 @@ export class TradeService {
         amount: String(amount), // Decimal 转字符串
         shares: shares != null ? String(shares) : undefined,
         price: price != null ? String(price) : undefined,
-        status: status as any,
+        status,
       },
     });
 
     // 5. 触发快照：
     //    - COMPLETED（场内 或 场外补录历史）→ 立即计算（份额已知）
     //    - PENDING（场外今天申购）→ 不计算，等 18:00 cron 补净值后重算
-    let snapshot: unknown | null = null;
+    let snapshot: unknown = null;
     if (status === 'COMPLETED') {
       snapshot = await this.snapshotService
         .calculateAndSave(portfolioId)

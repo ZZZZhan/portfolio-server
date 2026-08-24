@@ -126,7 +126,9 @@ describe('PortfolioService', () => {
       await expect(
         service.update(
           1,
-          { holdings: [holdingInput('510300', 60), holdingInput('513100', 30)] },
+          {
+            holdings: [holdingInput('510300', 60), holdingInput('513100', 30)],
+          },
           'u1',
         ),
       ).rejects.toBeInstanceOf(BadRequestException);
@@ -218,7 +220,9 @@ describe('PortfolioService', () => {
       expect(prisma.portfolio.findFirst).toHaveBeenCalledWith(
         expect.objectContaining({ where: { id: 1, userId: 'u1' } }),
       );
-      expect(prisma.portfolio.delete).toHaveBeenCalledWith({ where: { id: 1 } });
+      expect(prisma.portfolio.delete).toHaveBeenCalledWith({
+        where: { id: 1 },
+      });
     });
   });
 });

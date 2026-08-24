@@ -21,9 +21,10 @@ describe('RebalanceNotifierService (integration)', () => {
   let app: INestApplication;
   let prisma: PrismaService;
   let notifier: RebalanceNotifierService;
-  const send = jest.fn<Promise<NotificationResult>, [string, NotificationMessage]>(
-    async () => ({ ok: true }),
-  );
+  const send = jest.fn<
+    Promise<NotificationResult>,
+    [string, NotificationMessage]
+  >(() => ({ ok: true }));
 
   const email = `notify-${Date.now()}@test.local`;
   const symbolOver = '999990'; // 超阈值（用不会被真实行情影响的占位代码）
@@ -67,7 +68,12 @@ describe('RebalanceNotifierService (integration)', () => {
 
     // 组合：持仓 threshold=5，一个 currentRatio 偏离 20%（超），一个偏离 2%（不超）
     const aOver = await prisma.asset.create({
-      data: { symbol: symbolOver, name: '偏离标的', type: 'ETF', exchange: 'SH' },
+      data: {
+        symbol: symbolOver,
+        name: '偏离标的',
+        type: 'ETF',
+        exchange: 'SH',
+      },
     });
     const aOk = await prisma.asset.create({
       data: { symbol: symbolOk, name: '正常标的', type: 'ETF', exchange: 'SH' },
@@ -97,8 +103,20 @@ describe('RebalanceNotifierService (integration)', () => {
     // 落一条快照：over 偏离 +20%，ok 偏离 +2%
     const today = new Date(Date.UTC(2026, 0, 1));
     const holdingsJson = [
-      { symbol: symbolOver, name: '偏离标的', currentRatio: 0.7, targetRatio: 0.5, deviation: 0.2 },
-      { symbol: symbolOk, name: '正常标的', currentRatio: 0.52, targetRatio: 0.5, deviation: 0.02 },
+      {
+        symbol: symbolOver,
+        name: '偏离标的',
+        currentRatio: 0.7,
+        targetRatio: 0.5,
+        deviation: 0.2,
+      },
+      {
+        symbol: symbolOk,
+        name: '正常标的',
+        currentRatio: 0.52,
+        targetRatio: 0.5,
+        deviation: 0.02,
+      },
     ];
     await prisma.dailySnapshot.create({
       data: {
@@ -111,7 +129,7 @@ describe('RebalanceNotifierService (integration)', () => {
         todayProfit: '0',
         todayProfitRate: '0',
         completion: '1',
-        holdings: holdingsJson as unknown as object,
+        holdings: holdingsJson,
       },
     });
   });
@@ -126,7 +144,9 @@ describe('RebalanceNotifierService (integration)', () => {
     await prisma.asset.deleteMany({
       where: { symbol: { in: [symbolOver, symbolOk] } },
     });
-    const noKey = await prisma.user.findFirst({ where: { email: `nokey-${email}` } });
+    const noKey = await prisma.user.findFirst({
+      where: { email: `nokey-${email}` },
+    });
     if (noKey) await prisma.user.delete({ where: { id: noKey.id } });
     await prisma.user.delete({ where: { id: userId } });
     await app.close();
@@ -157,7 +177,7 @@ describe('RebalanceNotifierService (integration)', () => {
   });
 
   it('推送失败时记录为 skipped 而非抛错', async () => {
-    send.mockImplementation(async () => ({ ok: false, reason: '模拟失败' }));
+    send.mockImplementation(() => ({ ok: false, reason: '模拟失败' }));
     const result = await notifier.notifyAll();
     expect(result.notified).toBe(0);
     // notifyAll 会扫描所有配了 SendKey 的用户（测试库可能残留其它带 key 用户），

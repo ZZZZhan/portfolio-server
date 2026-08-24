@@ -9,10 +9,7 @@ import {
   Query,
   ParseIntPipe,
 } from '@nestjs/common';
-import {
-  Session,
-  AllowAnonymous,
-} from '@thallesp/nestjs-better-auth';
+import { Session, AllowAnonymous } from '@thallesp/nestjs-better-auth';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
 import { PortfolioService } from './portfolio.service';
 import { TradeService } from './trade.service';

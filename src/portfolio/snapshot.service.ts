@@ -271,8 +271,11 @@ export class SnapshotService {
       orderBy: { date: 'desc' },
     });
     if (!snap) return null;
-    // Decimal → number，holdings Json → 结构化
-    const holdings = (snap.holdings as any)?.holdings ?? snap.holdings ?? [];
+    // Decimal → number，holdings Json → 结构化。
+    // 兼容两代格式：新格式直接存持仓数组；旧格式可能包在 { holdings: [...] } 里。
+    const json = snap.holdings as
+      Record<string, unknown> | Array<unknown> | null;
+    const holdings = Array.isArray(json) ? json : (json?.holdings ?? []);
     return {
       portfolioId: snap.portfolioId,
       date: snap.date,

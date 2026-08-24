@@ -27,15 +27,16 @@ export interface UnifiedResponse<T = unknown> {
  * 不处理的情况：抛出的异常会绕过本拦截器（异常过滤器负责），错误响应仍是 Nest 默认格式。
  */
 @Injectable()
-export class TransformInterceptor<T>
-  implements NestInterceptor<T, UnifiedResponse<T>>
-{
+export class TransformInterceptor<T> implements NestInterceptor<
+  T,
+  UnifiedResponse<T>
+> {
   intercept(
     _context: ExecutionContext,
     next: CallHandler,
   ): Observable<UnifiedResponse<T>> {
     return next.handle().pipe(
-      map((data) => ({
+      map((data: T) => ({
         code: 0,
         message: 'ok',
         data: data ?? null,

@@ -54,7 +54,7 @@ export class ServerChanProvider extends NotificationProvider {
       }
       return {
         ok,
-        reason: ok ? undefined : result?.message ?? `HTTP ${response.status}`,
+        reason: ok ? undefined : (result?.message ?? `HTTP ${response.status}`),
       };
     } catch (error) {
       const reason = `网络请求失败：${(error as Error).message}`;

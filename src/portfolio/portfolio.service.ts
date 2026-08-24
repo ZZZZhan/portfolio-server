@@ -35,7 +35,9 @@ export class PortfolioService {
   private assertRatioSum(holdings: HoldingInput[]) {
     const sum = holdings.reduce((acc, h) => acc + h.targetRatio, 0);
     if (Math.abs(sum - 100) > 0.01) {
-      throw new BadRequestException(`持仓目标配比之和必须为 100，当前为 ${sum}`);
+      throw new BadRequestException(
+        `持仓目标配比之和必须为 100，当前为 ${sum}`,
+      );
     }
   }
 
@@ -47,7 +49,12 @@ export class PortfolioService {
       createPortfolioDto.holdings.map(async (h) => {
         const asset = await this.prisma.asset.upsert({
           where: { symbol: h.symbol },
-          create: { symbol: h.symbol, name: h.name, type: h.assetType, exchange: h.exchange },
+          create: {
+            symbol: h.symbol,
+            name: h.name,
+            type: h.assetType,
+            exchange: h.exchange,
+          },
           update: { name: h.name, type: h.assetType, exchange: h.exchange }, // 名称/类型/交易所以后端最新搜索结果为准
         });
         return {
@@ -137,7 +144,11 @@ export class PortfolioService {
    * 注意：移除一个标的会连带删掉它名下所有交易（schema 的 onDelete: Cascade），
    * 该标的的历史收益就对不上了，前端须在提交前明确告知笔数。
    */
-  async update(id: number, updatePortfolioDto: UpdatePortfolioDto, userId: string) {
+  async update(
+    id: number,
+    updatePortfolioDto: UpdatePortfolioDto,
+    userId: string,
+  ) {
     const portfolio = await this.prisma.portfolio.findFirst({
       where: { id, userId },
       include: { holdings: { include: { asset: true } } },
