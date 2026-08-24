@@ -17,7 +17,7 @@ describe('AppController (e2e)', () => {
       .useValue({})
       .compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({ forceCloseConnections: true });
     app.useGlobalInterceptors(new TransformInterceptor());
     await app.init();
   });

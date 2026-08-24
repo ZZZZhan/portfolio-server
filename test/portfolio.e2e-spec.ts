@@ -15,6 +15,12 @@ interface ApiResponse<T = unknown> {
   data: T;
 }
 
+// supertest TestAgent 通过原型链继承 superagent Agent，运行时存在 close()
+// （@types 未声明，用结构化类型补全）
+interface ClosableAgent extends Agent {
+  close(): void;
+}
+
 /**
  * Portfolio API e2e（认证链路）。
  *
@@ -25,6 +31,7 @@ interface ApiResponse<T = unknown> {
 describe('PortfolioController (e2e)', () => {
   let app: INestApplication<App>;
   let agent: Agent; // 带 cookie 的请求代理
+  let userBAgent: Agent | undefined; // 隔离测试用的第二用户代理（顶层声明便于 afterAll 关闭）
   let prisma: PrismaService;
 
   const email = `e2e-${Date.now()}@portfolio.test`;
@@ -40,7 +47,7 @@ describe('PortfolioController (e2e)', () => {
       .useValue({}) // 禁掉 cron 补跑，避免测试期间写快照
       .compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({ forceCloseConnections: true });
     prisma = moduleFixture.get(PrismaService);
     // 和 main.ts 保持一致：启用全局 /api 前缀、校验、统一响应包装。
     app.setGlobalPrefix('api');
@@ -73,6 +80,12 @@ describe('PortfolioController (e2e)', () => {
         await prisma.user.delete({ where: { id: user.id } });
       }
     }
+    // 关闭 keep-alive agent 连接，避免 http 客户端 socket 保持事件循环活跃
+    const closeAgent = (a: Agent | undefined) =>
+      (a as ClosableAgent | undefined)?.close?.();
+    closeAgent(agent);
+    closeAgent(userBAgent);
+    // app.close() 触发 PrismaService.onModuleDestroy，关闭共享 pg 连接池
     await app.close();
   });
 
@@ -158,7 +171,6 @@ describe('PortfolioController (e2e)', () => {
 
   describe('快照接口数据隔离', () => {
     let portfolioId: number;
-    let userBAgent: Agent;
 
     beforeAll(async () => {
       // 取 userA（现有 agent）在前置用例里创建的组合 id

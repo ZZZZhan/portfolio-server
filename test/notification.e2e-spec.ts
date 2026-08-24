@@ -41,7 +41,7 @@ describe('RebalanceNotifierService (integration)', () => {
       .useValue({ send })
       .compile();
 
-    app = moduleFixture.createNestApplication();
+    app = moduleFixture.createNestApplication({ forceCloseConnections: true });
     await app.init();
     prisma = moduleFixture.get(PrismaService);
     notifier = moduleFixture.get(RebalanceNotifierService);
