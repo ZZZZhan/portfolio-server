@@ -24,7 +24,7 @@ export interface UnifiedResponse<T = unknown> {
  * 解决的问题：NestJS 默认对 `return null` 会发送空响应体（Content-Length: 0），
  * 导致前端 res.json() 解析失败、无限重试。统一包装后 null 也变成合法 JSON。
  *
- * 不处理的情况：抛出的异常会绕过本拦截器（异常过滤器负责），错误响应仍是 Nest 默认格式。
+ * 异常不经过此拦截器，由 AllExceptionsFilter 统一包装为 { code: httpStatus, message, data: null }。
  */
 @Injectable()
 export class TransformInterceptor<T> implements NestInterceptor<
