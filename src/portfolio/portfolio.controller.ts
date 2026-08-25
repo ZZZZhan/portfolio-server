@@ -8,6 +8,7 @@ import {
   Delete,
   Query,
   ParseIntPipe,
+  Header,
 } from '@nestjs/common';
 import { Session, AllowAnonymous } from '@thallesp/nestjs-better-auth';
 import type { UserSession } from '@thallesp/nestjs-better-auth';
@@ -49,6 +50,12 @@ export class PortfolioController {
   @Get()
   findAll(@Session() session: UserSession<typeof auth>) {
     return this.portfolioService.findAll(session.user.id);
+  }
+
+  @Get('home')
+  @Header('Cache-Control', 'private, max-age=10')
+  getHome(@Session() session: UserSession<typeof auth>) {
+    return this.portfolioService.getHomeData(session.user.id);
   }
 
   @Get(':id/trades')

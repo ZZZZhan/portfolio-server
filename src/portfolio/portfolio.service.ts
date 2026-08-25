@@ -1,6 +1,7 @@
 import {
   BadRequestException,
   Injectable,
+  Logger,
   NotFoundException,
 } from '@nestjs/common';
 import { CreatePortfolioDto, HoldingInput } from './dto/create-portfolio.dto';
@@ -11,6 +12,14 @@ import { SnapshotService } from './snapshot.service';
 
 @Injectable()
 export class PortfolioService {
+  private readonly logger = new Logger(PortfolioService.name);
+  // 服务端内存缓存：按 userId 缓存 home 响应 5s，命中时跳过 DB
+  private readonly homeCache = new Map<
+    string,
+    { data: { portfolios: unknown[]; snapshots: unknown[] }; expiresAt: number }
+  >();
+  private readonly HOME_CACHE_TTL_MS = 5_000;
+
   constructor(
     private prisma: PrismaService,
     private snapshotService: SnapshotService,
@@ -89,6 +98,101 @@ export class PortfolioService {
     });
     return res;
   }
+
+  /**
+   * 聚合首页数据：组合列表 + 对齐的快照数组（snapshots[i] 对应 portfolios[i]）。
+   * 约定：
+   * - 单快照 500 记日志返 null，不影响整体；不用 catch(()=>null) 静默吞错。
+   * - 若已落库快照不存在（新组合/未到 18:00 定时），则实时计算一次并落库，保证有交易就有值。
+   * - 鉴权由调用方传入的 userId（来自 session）保证；无 portfolios 时返回空数组。
+   * - 服务端内存缓存 5s，重复请求命中缓存跳过 DB。
+   */
+  async getHomeData(userId: string): Promise<{
+    portfolios: unknown[];
+    snapshots: unknown[];
+  }> {
+    const now = Date.now();
+    const cached = this.homeCache.get(userId);
+    if (cached && cached.expiresAt > now) {
+      return cached.data;
+    }
+
+    const portfolios = await this.prisma.portfolio.findMany({
+      where: { userId },
+      orderBy: { id: 'asc' },
+    });
+
+    if (portfolios.length === 0) {
+      const data = { portfolios: [], snapshots: [] };
+      this.homeCache.set(userId, {
+        data,
+        expiresAt: now + this.HOME_CACHE_TTL_MS,
+      });
+      return data;
+    }
+
+    // 阶段一：并行读已持久化的快照（单条失败置 null 并记日志）
+    const snapshots: unknown[] = await Promise.all(
+      portfolios.map(async (p) => {
+        try {
+          return await this.snapshotService.getLatest(p.id);
+        } catch (err) {
+          this.logger.error(
+            `快照读取失败 portfolioId=${p.id}`,
+            err instanceof Error ? err.stack : String(err),
+          );
+          return null;
+        }
+      }),
+    );
+
+    // 阶段二：对仍为 null 的组合实时计算一次（有交易就应有值），共享预取行情
+    const missingIdx = snapshots
+      .map((s, i) => (s === null ? i : -1))
+      .filter((i) => i !== -1);
+
+    if (missingIdx.length > 0) {
+      let prefetched: import('./snapshot.service').PrefetchedPrices | undefined;
+      const missingIds = missingIdx.map((i) => portfolios[i].id);
+      try {
+        prefetched = await this.snapshotService.prefetchPrices(missingIds);
+      } catch (err) {
+        this.logger.error(
+          `行情预取失败 portfolioIds=${missingIds.join(',')}`,
+          err instanceof Error ? err.stack : String(err),
+        );
+      }
+
+      await Promise.all(
+        missingIdx.map(async (idx) => {
+          const p = portfolios[idx];
+          try {
+            await this.snapshotService.calculateAndSave(
+              p.id,
+              new Date(),
+              prefetched ? { prefetched } : {},
+            );
+            const after = await this.snapshotService.getLatest(p.id);
+            snapshots[idx] = after;
+          } catch (err) {
+            this.logger.error(
+              `快照计算失败 portfolioId=${p.id}`,
+              err instanceof Error ? err.stack : String(err),
+            );
+            snapshots[idx] = null;
+          }
+        }),
+      );
+    }
+
+    const data = { portfolios, snapshots };
+    this.homeCache.set(userId, {
+      data,
+      expiresAt: now + this.HOME_CACHE_TTL_MS,
+    });
+    return data;
+  }
+
 
   /** 组合详情（持仓骨架）。限定 userId —— 组合详情含持仓配比，不该跨用户可读
    *  组合不存在或不属于当前用户 → 404（与其它组合级端点一致，而非返回 null） */

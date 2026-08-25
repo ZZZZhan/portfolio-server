@@ -30,6 +30,7 @@ describe('RebalanceNotifierService (integration)', () => {
   const symbolOver = '999990'; // 超阈值（用不会被真实行情影响的占位代码）
   const symbolOk = '999991'; // 未超阈值
   let userId: string;
+  let portfolioId: number;
 
   beforeAll(async () => {
     const moduleFixture: TestingModule = await Test.createTestingModule({
@@ -91,6 +92,7 @@ describe('RebalanceNotifierService (integration)', () => {
         },
       },
     });
+    portfolioId = p.id;
     // 无 Key 用户的组合（不应被推送）
     await prisma.portfolio.create({
       data: {
@@ -136,11 +138,13 @@ describe('RebalanceNotifierService (integration)', () => {
 
   afterAll(async () => {
     // 清理（组合级联删 holding/snapshot；资产、用户按 id 删）
+    if (portfolioId) {
+      await prisma.dailySnapshot.deleteMany({ where: { portfolioId } });
+    }
     await prisma.portfolio.deleteMany({ where: { userId } });
     await prisma.portfolio.deleteMany({
       where: { userId: { contains: 'u-nokey-' } },
     });
-    await prisma.dailySnapshot.deleteMany();
     await prisma.asset.deleteMany({
       where: { symbol: { in: [symbolOver, symbolOk] } },
     });
